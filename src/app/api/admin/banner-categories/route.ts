@@ -39,7 +39,7 @@ export async function GET() {
           .from('banners')
           .select('id', { count: 'exact', head: true })
           .contains('category_ids', [cat.id])
-          .eq('is_pinned', true),
+          .contains('pinned_category_ids', [cat.id]),
       ]);
 
       return {

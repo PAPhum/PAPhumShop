@@ -23,6 +23,18 @@ function toUniqueStringArray(value: unknown): string[] {
   );
 }
 
+function normalizePinOrders(value: unknown): Record<string, number> {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
+  const out: Record<string, number> = {};
+  for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
+    const num = Number(v);
+    if (k && Number.isFinite(num)) {
+      out[k] = num;
+    }
+  }
+  return out;
+}
+
 export async function GET(req: NextRequest) {
   const auth = await requireAdmin();
   if (!auth.ok) return auth.response;
@@ -31,7 +43,6 @@ export async function GET(req: NextRequest) {
 
   const { searchParams } = new URL(req.url);
 
-  // ดึงเลขรหัสงานถัดไป (จำนวนงานทั้งหมด + 1)
   if (searchParams.get('meta') === 'next_code') {
     const { count, error } = await supabase
       .from('banners')
@@ -55,8 +66,6 @@ export async function GET(req: NextRequest) {
     .from('banners')
     .select('*')
     .contains('category_ids', [categoryId])
-    .order('is_pinned', { ascending: false })
-    .order('pin_order', { ascending: true })
     .order('created_at', { ascending: false })
     .limit(2000);
 
@@ -64,7 +73,31 @@ export async function GET(req: NextRequest) {
     return dbErrorResponse('banners.list', error, 500);
   }
 
-  return jsonNoStore({ banners: data ?? [] });
+  const normalized = (data ?? []).map((row) => {
+    const pinnedCatIds = toUniqueStringArray(row.pinned_category_ids);
+    const pinOrders = normalizePinOrders(row.pin_orders);
+    const isPinnedInThisCat = pinnedCatIds.includes(categoryId);
+    const orderInThisCat = pinOrders[categoryId] ?? 9999;
+
+    return {
+      ...row,
+      pinned_category_ids: pinnedCatIds,
+      pin_orders: pinOrders,
+      is_pinned: isPinnedInThisCat,
+      pin_order: isPinnedInThisCat ? orderInThisCat : 0,
+    };
+  });
+
+  normalized.sort((a, b) => {
+    if (a.is_pinned !== b.is_pinned) return a.is_pinned ? -1 : 1;
+    if (a.is_pinned && b.is_pinned) {
+      const diff = a.pin_order - b.pin_order;
+      if (diff !== 0) return diff;
+    }
+    return String(b.created_at ?? '').localeCompare(String(a.created_at ?? ''));
+  });
+
+  return jsonNoStore({ banners: normalized });
 }
 
 export async function POST(req: NextRequest) {
@@ -117,7 +150,9 @@ export async function POST(req: NextRequest) {
     return jsonNoStore({ category });
   }
 
-  const watermarkedUrl = String(body.watermarkedUrl ?? body.watermarked_url ?? '').trim();
+  const watermarkedUrl = String(
+    body.watermarkedUrl ?? body.watermarked_url ?? ''
+  ).trim();
   if (!watermarkedUrl) {
     return jsonNoStore({ error: 'ไม่พบ URL รูปภาพ' }, { status: 400 });
   }
@@ -138,6 +173,8 @@ export async function POST(req: NextRequest) {
       is_public: (body.isPublic ?? body.is_public) !== false,
       is_pinned: false,
       pin_order: 0,
+      pinned_category_ids: [],
+      pin_orders: {},
     })
     .select('*')
     .single();
@@ -153,9 +190,10 @@ export async function POST(req: NextRequest) {
   if (origKey && origName) {
     const nowIso = new Date().toISOString();
     const token = randomBytes(16).toString('hex');
-    const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString();
+    const expiresAt = new Date(
+      Date.now() + 7 * 24 * 60 * 60 * 1000
+    ).toISOString();
 
-    // กวาดลบประวัติลิงก์ส่งงานที่หมดอายุแล้วออกอัตโนมัติ
     await supabase.from('deliveries').delete().lt('expires_at', nowIso);
 
     const { error: deliveryError } = await supabase.from('deliveries').insert({
@@ -185,14 +223,42 @@ export async function PATCH(req: NextRequest) {
 
   if (body.action === 'reorder_pinned' && Array.isArray(body.orderedBannerIds)) {
     const ids = body.orderedBannerIds.map((id: unknown) => String(id));
+    const categoryId = body.categoryId ? String(body.categoryId).trim() : '';
+
+    if (!categoryId) {
+      return jsonNoStore({ error: 'Missing categoryId' }, { status: 400 });
+    }
+
+    const { data: rows } = await supabase
+      .from('banners')
+      .select('id, pinned_category_ids, pin_orders')
+      .in('id', ids);
+
+    const byId = new Map((rows ?? []).map((r) => [r.id, r]));
+
     await Promise.all(
-      ids.map((id: string, idx: number) =>
-        supabase
+      ids.map((id: string, idx: number) => {
+        const existing = byId.get(id);
+        const nextPinnedCats = Array.from(
+          new Set([...toUniqueStringArray(existing?.pinned_category_ids), categoryId])
+        );
+        const nextPinOrders = {
+          ...normalizePinOrders(existing?.pin_orders),
+          [categoryId]: idx + 1,
+        };
+
+        return supabase
           .from('banners')
-          .update({ pin_order: idx + 1 })
-          .eq('id', id)
-      )
+          .update({
+            pinned_category_ids: nextPinnedCats,
+            pin_orders: nextPinOrders,
+            is_pinned: nextPinnedCats.length > 0,
+            pin_order: idx + 1,
+          })
+          .eq('id', id);
+      })
     );
+
     revalidateTag('banners', { expire: 0 });
     return jsonNoStore({ ok: true });
   }
@@ -206,12 +272,15 @@ export async function PATCH(req: NextRequest) {
       return jsonNoStore({ error: 'กรุณาเลือกรูปอย่างน้อย 1 รูป' }, { status: 400 });
     }
     if ((mode === 'add' || mode === 'replace') && targetCategoryIds.length === 0) {
-      return jsonNoStore({ error: 'กรุณาเลือกหมวดหมู่อย่างน้อย 1 หมวด' }, { status: 400 });
+      return jsonNoStore(
+        { error: 'กรุณาเลือกหมวดหมู่อย่างน้อย 1 หมวด' },
+        { status: 400 }
+      );
     }
 
     const { data: existingRows, error: fetchErr } = await supabase
       .from('banners')
-      .select('id, category_id, category_ids')
+      .select('id, category_id, category_ids, pinned_category_ids, pin_orders')
       .in('id', bannerIds);
 
     if (fetchErr || !existingRows) {
@@ -241,11 +310,26 @@ export async function PATCH(req: NextRequest) {
           nextIds = Array.from(new Set<string>([...currentIds, ...targetCategoryIds]));
         }
 
+        const nextIdSet = new Set(nextIds);
+        const nextPinnedCats = toUniqueStringArray(row.pinned_category_ids).filter(
+          (catId) => nextIdSet.has(catId)
+        );
+        const currentOrders = normalizePinOrders(row.pin_orders);
+        const nextPinOrders: Record<string, number> = {};
+        for (const catId of nextPinnedCats) {
+          if (currentOrders[catId] !== undefined) {
+            nextPinOrders[catId] = currentOrders[catId];
+          }
+        }
+
         return supabase
           .from('banners')
           .update({
             category_id: nextIds[0] ?? null,
             category_ids: nextIds,
+            pinned_category_ids: nextPinnedCats,
+            pin_orders: nextPinOrders,
+            is_pinned: nextPinnedCats.length > 0,
           })
           .eq('id', row.id);
       })
@@ -263,11 +347,32 @@ export async function PATCH(req: NextRequest) {
       return jsonNoStore({ error: 'Missing bannerId' }, { status: 400 });
     }
 
+    const { data: existing } = await supabase
+      .from('banners')
+      .select('pinned_category_ids, pin_orders')
+      .eq('id', bannerId)
+      .maybeSingle();
+
+    const nextIdSet = new Set(categoryIds);
+    const nextPinnedCats = toUniqueStringArray(
+      existing?.pinned_category_ids
+    ).filter((catId) => nextIdSet.has(catId));
+    const currentOrders = normalizePinOrders(existing?.pin_orders);
+    const nextPinOrders: Record<string, number> = {};
+    for (const catId of nextPinnedCats) {
+      if (currentOrders[catId] !== undefined) {
+        nextPinOrders[catId] = currentOrders[catId];
+      }
+    }
+
     const { error } = await supabase
       .from('banners')
       .update({
         category_id: categoryIds[0] ?? null,
         category_ids: categoryIds,
+        pinned_category_ids: nextPinnedCats,
+        pin_orders: nextPinOrders,
+        is_pinned: nextPinnedCats.length > 0,
       })
       .eq('id', bannerId);
 
@@ -289,7 +394,7 @@ export async function PATCH(req: NextRequest) {
 
   const { data: targetBanner } = await supabase
     .from('banners')
-    .select('id, category_id, category_ids')
+    .select('id, category_id, category_ids, pinned_category_ids, pin_orders')
     .eq('id', bannerId)
     .single();
 
@@ -297,16 +402,25 @@ export async function PATCH(req: NextRequest) {
     return jsonNoStore({ error: 'ไม่พบรูปภาพ' }, { status: 404 });
   }
 
-  const checkCatId = contextCategoryId || targetBanner.category_id;
+  const targetCatId = contextCategoryId || targetBanner.category_id;
+  if (!targetCatId) {
+    return jsonNoStore({ error: 'ไม่พบหมวดหมู่เป้าหมาย' }, { status: 400 });
+  }
 
-  if (isPinned && checkCatId) {
+  const currentPinnedCats = toUniqueStringArray(
+    targetBanner.pinned_category_ids
+  );
+  const currentPinOrders = normalizePinOrders(targetBanner.pin_orders);
+
+  if (isPinned) {
     const { count } = await supabase
       .from('banners')
       .select('id', { count: 'exact', head: true })
-      .contains('category_ids', [checkCatId])
-      .eq('is_pinned', true);
+      .contains('category_ids', [targetCatId])
+      .contains('pinned_category_ids', [targetCatId]);
 
-    if ((count ?? 0) >= MAX_PINNED_PER_CATEGORY) {
+    const alreadyPinnedHere = currentPinnedCats.includes(targetCatId);
+    if (!alreadyPinnedHere && (count ?? 0) >= MAX_PINNED_PER_CATEGORY) {
       return jsonNoStore(
         {
           error: `ปักหมุดได้สูงสุด ${MAX_PINNED_PER_CATEGORY} รูปต่อหมวดหมู่ กรุณายกเลิกหมุดรูปอื่นก่อน`,
@@ -315,11 +429,22 @@ export async function PATCH(req: NextRequest) {
       );
     }
 
+    const nextPinnedCats = Array.from(new Set([...currentPinnedCats, targetCatId]));
+    const nextOrder = alreadyPinnedHere
+      ? currentPinOrders[targetCatId] ?? (count ?? 0)
+      : (count ?? 0) + 1;
+    const nextPinOrders = {
+      ...currentPinOrders,
+      [targetCatId]: nextOrder,
+    };
+
     const { error } = await supabase
       .from('banners')
       .update({
-        is_pinned: true,
-        pin_order: (count ?? 0) + 1,
+        pinned_category_ids: nextPinnedCats,
+        pin_orders: nextPinOrders,
+        is_pinned: nextPinnedCats.length > 0,
+        pin_order: nextOrder,
       })
       .eq('id', bannerId);
 
@@ -327,10 +452,16 @@ export async function PATCH(req: NextRequest) {
       return dbErrorResponse('banners.pin', error, 400);
     }
   } else {
+    const nextPinnedCats = currentPinnedCats.filter((id) => id !== targetCatId);
+    const nextPinOrders = { ...currentPinOrders };
+    delete nextPinOrders[targetCatId];
+
     const { error } = await supabase
       .from('banners')
       .update({
-        is_pinned: false,
+        pinned_category_ids: nextPinnedCats,
+        pin_orders: nextPinOrders,
+        is_pinned: nextPinnedCats.length > 0,
         pin_order: 0,
       })
       .eq('id', bannerId);
@@ -356,7 +487,6 @@ export async function DELETE(req: NextRequest) {
     return jsonNoStore({ error: 'Missing id' }, { status: 400 });
   }
 
-  // เก็บ key ของไฟล์บน R2 ไว้ก่อนลบแถว (FK deliveries.banner_id เป็น ON DELETE SET NULL)
   const [{ data: banner }, { data: deliveryRows }] = await Promise.all([
     supabase
       .from('banners')
@@ -384,7 +514,6 @@ export async function DELETE(req: NextRequest) {
   }
 
   if (keys.size > 0) {
-    // ลบ object ล้มเหลวไม่ควรทำให้การลบแถวใน DB ถูกมองว่าล้มเหลว
     await Promise.allSettled([...keys].map((key) => deleteR2Object(key)));
   }
 

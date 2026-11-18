@@ -2,8 +2,9 @@ import { Suspense } from 'react';
 import type { Metadata } from 'next';
 import { connection } from 'next/server';
 import Link from 'next/link';
-import { Download, Clock, AlertCircle, Snowflake, ArrowLeft } from 'lucide-react';
+import { Clock, AlertCircle, Snowflake, ArrowLeft } from 'lucide-react';
 import { createSupabaseAdminClient } from '@/lib/supabase/admin';
+import DeliverDownloadButton from '@/components/DeliverDownloadButton';
 
 export const metadata: Metadata = {
   robots: { index: false, follow: false },
@@ -125,13 +126,10 @@ async function DeliverContentLoader({ params }: DeliverPageProps) {
           </div>
         </div>
 
-        <a
-          href={`/api/deliver/${encodeURIComponent(token)}/download`}
-          className="flex w-full items-center justify-center gap-2 rounded-full bg-[#F1F5F9] py-3 text-xs font-semibold text-[#090B10] transition-all active:scale-95 hover:bg-white sm:text-sm"
-        >
-          <Download className="h-4 w-4" />
-          <span>ดาวน์โหลดไฟล์ต้นฉบับ</span>
-        </a>
+        <DeliverDownloadButton
+          token={token}
+          filename={delivery.original_filename}
+        />
       </div>
     </div>
   );

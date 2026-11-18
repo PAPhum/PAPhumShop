@@ -67,6 +67,8 @@ export interface BannerItem {
   is_public: boolean;
   is_pinned: boolean;
   pin_order: number;
+  pinned_category_ids?: string[];
+  pin_orders?: Record<string, number>;
   created_at: string;
 }
 

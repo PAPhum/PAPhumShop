@@ -2,14 +2,7 @@
 
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import {
-  Gamepad2,
-  Image as ImageIcon,
-  MessageCircle,
-  ArrowUpRight,
-} from 'lucide-react';
-
-const FACEBOOK_PROFILE_URL = 'https://www.facebook.com/phurinat.preedasuriyachai';
+import { Gamepad2, Image as ImageIcon } from 'lucide-react';
 
 export default function Navbar() {
   const pathname = usePathname() || '/store';
@@ -49,50 +42,36 @@ export default function Navbar() {
         </Link>
 
         {!isAdminRoute && !isDeliverRoute && (
-          <div className="flex shrink-0 items-center gap-1.5 sm:gap-2.5">
-            <nav
-              aria-label="เมนูหลัก"
-              className="relative flex items-center rounded-full border border-white/[0.12] bg-white/[0.04] p-1 shadow-[0_8px_24px_rgba(0,0,0,0.45),inset_0_1px_0_rgba(255,255,255,0.12)] backdrop-blur-2xl"
+          <nav
+            aria-label="เมนูหลัก"
+            className="relative flex shrink-0 items-center rounded-full border border-white/[0.12] bg-white/[0.04] p-1 shadow-[0_8px_24px_rgba(0,0,0,0.45),inset_0_1px_0_rgba(255,255,255,0.12)] backdrop-blur-2xl"
+          >
+            <Link
+              href="/store"
+              aria-current={isStoreActive ? 'page' : undefined}
+              className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-semibold transition-all duration-200 active:scale-95 sm:px-4 sm:text-sm ${
+                isStoreActive
+                  ? 'bg-[#F1F5F9] text-[#08090D] shadow-[0_2px_12px_rgba(241,245,249,0.28)]'
+                  : 'text-zinc-400 hover:text-zinc-200'
+              }`}
             >
-              <Link
-                href="/store"
-                aria-current={isStoreActive ? 'page' : undefined}
-                className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-semibold transition-all duration-200 active:scale-95 sm:px-4 sm:text-sm ${
-                  isStoreActive
-                    ? 'bg-[#F1F5F9] text-[#08090D] shadow-[0_2px_12px_rgba(241,245,249,0.28)]'
-                    : 'text-zinc-400 hover:text-zinc-200'
-                }`}
-              >
-                <Gamepad2 className="h-3.5 w-3.5" />
-                <span>ID</span>
-              </Link>
+              <Gamepad2 className="h-3.5 w-3.5" />
+              <span>ID</span>
+            </Link>
 
-              <Link
-                href="/banners"
-                aria-current={isBannersActive ? 'page' : undefined}
-                className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-semibold transition-all duration-200 active:scale-95 sm:px-4 sm:text-sm ${
-                  isBannersActive
-                    ? 'bg-[#F1F5F9] text-[#08090D] shadow-[0_2px_12px_rgba(241,245,249,0.28)]'
-                    : 'text-zinc-400 hover:text-zinc-200'
-                }`}
-              >
-                <ImageIcon className="h-3.5 w-3.5" />
-                <span>ตัดรูป</span>
-              </Link>
-            </nav>
-
-            <a
-              href={FACEBOOK_PROFILE_URL}
-              target="_blank"
-              rel="noopener noreferrer"
-              aria-label="ติดต่อ Facebook ร้าน PAPhum"
-              className="inline-flex h-9 items-center gap-1.5 rounded-full border border-[#93C5FD]/30 bg-[#93C5FD]/10 px-2.5 text-xs font-semibold text-[#93C5FD] transition-all active:scale-95 hover:border-[#93C5FD]/60 hover:bg-[#93C5FD]/20 sm:h-10 sm:px-3.5 sm:text-sm"
+            <Link
+              href="/banners"
+              aria-current={isBannersActive ? 'page' : undefined}
+              className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-semibold transition-all duration-200 active:scale-95 sm:px-4 sm:text-sm ${
+                isBannersActive
+                  ? 'bg-[#F1F5F9] text-[#08090D] shadow-[0_2px_12px_rgba(241,245,249,0.28)]'
+                  : 'text-zinc-400 hover:text-zinc-200'
+              }`}
             >
-              <MessageCircle className="h-3.5 w-3.5 shrink-0" />
-              <span className="hidden sm:inline">ติดต่อ</span>
-              <ArrowUpRight className="hidden h-3.5 w-3.5 opacity-75 sm:inline" />
-            </a>
-          </div>
+              <ImageIcon className="h-3.5 w-3.5" />
+              <span>ตัดรูป</span>
+            </Link>
+          </nav>
         )}
       </div>
     </header>

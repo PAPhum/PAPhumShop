@@ -12,10 +12,43 @@ const PUBLIC_ACCOUNT_COLUMNS =
   'id, code, status, price, min_down_weekly, min_down_monthly, interest_free_weeks, interest_free_months, tags, description, main_image_url, gallery_urls, created_at, updated_at';
 
 const PUBLIC_BANNER_COLUMNS =
-  'id, category_id, category_ids, code, watermarked_url, is_public, is_pinned, pin_order, created_at';
+  'id, category_id, category_ids, code, watermarked_url, is_public, is_pinned, pin_order, pinned_category_ids, pin_orders, created_at';
 
 function escapeIlikePattern(value: string): string {
   return value.replace(/[\\%_]/g, '\\$&');
+}
+
+function isPinnedInCategory(banner: BannerItem, categoryId: string): boolean {
+  if (Array.isArray(banner.pinned_category_ids)) {
+    return banner.pinned_category_ids.includes(categoryId);
+  }
+  return Boolean(banner.is_pinned);
+}
+
+function getPinOrderInCategory(banner: BannerItem, categoryId: string): number {
+  const mapOrder = banner.pin_orders?.[categoryId];
+  if (typeof mapOrder === 'number' && Number.isFinite(mapOrder)) {
+    return mapOrder;
+  }
+  return banner.pin_order ?? 9999;
+}
+
+function sortBannersForCategory(
+  list: BannerItem[],
+  categoryId: string
+): BannerItem[] {
+  return [...list].sort((a, b) => {
+    const aPinned = isPinnedInCategory(a, categoryId);
+    const bPinned = isPinnedInCategory(b, categoryId);
+    if (aPinned !== bPinned) return aPinned ? -1 : 1;
+    if (aPinned && bPinned) {
+      const diff =
+        getPinOrderInCategory(a, categoryId) -
+        getPinOrderInCategory(b, categoryId);
+      if (diff !== 0) return diff;
+    }
+    return b.created_at.localeCompare(a.created_at);
+  });
 }
 
 export const getCachedStoreAccounts = unstable_cache(
@@ -95,16 +128,12 @@ export const getCachedBannerPortfolio = unstable_cache(
         .from('banners')
         .select(PUBLIC_BANNER_COLUMNS)
         .eq('is_public', true)
-        .order('is_pinned', { ascending: false })
-        .order('pin_order', { ascending: true })
         .order('created_at', { ascending: false })
         .range(0, 999),
       supabase
         .from('banners')
         .select(PUBLIC_BANNER_COLUMNS)
         .eq('is_public', true)
-        .order('is_pinned', { ascending: false })
-        .order('pin_order', { ascending: true })
         .order('created_at', { ascending: false })
         .range(1000, 1999),
     ]);
@@ -126,8 +155,6 @@ export const getCachedBannerPortfolio = unstable_cache(
         .from('banners')
         .select(PUBLIC_BANNER_COLUMNS)
         .eq('is_public', true)
-        .order('is_pinned', { ascending: false })
-        .order('pin_order', { ascending: true })
         .order('created_at', { ascending: false })
         .range(2000, exactTotal - 1);
 
@@ -157,8 +184,8 @@ export const getCachedBannerPortfolio = unstable_cache(
     }
 
     const sections: BannerCategorySection[] = categories.map((cat) => {
-      const catBanners = bannersByCategory.get(cat.id) ?? [];
-      const totalCount = catBanners.length;
+      const rawCatBanners = bannersByCategory.get(cat.id) ?? [];
+      const totalCount = rawCatBanners.length;
 
       if (cat.hide_preview) {
         return {
@@ -168,8 +195,12 @@ export const getCachedBannerPortfolio = unstable_cache(
         };
       }
 
-      const pinned = catBanners.filter((b) => b.is_pinned).slice(0, 10);
-      const showcase = pinned.length > 0 ? pinned : catBanners.slice(0, 10);
+      const sortedCatBanners = sortBannersForCategory(rawCatBanners, cat.id);
+      const pinned = sortedCatBanners
+        .filter((b) => isPinnedInCategory(b, cat.id))
+        .slice(0, 10);
+      const showcase =
+        pinned.length > 0 ? pinned : sortedCatBanners.slice(0, 10);
 
       return {
         ...cat,
@@ -183,7 +214,7 @@ export const getCachedBannerPortfolio = unstable_cache(
       totalWorksCount: exactTotal,
     };
   },
-  ['public-banner-portfolio-v1'],
+  ['public-banner-portfolio-v2'],
   { revalidate: 120, tags: ['banners', 'categories'] }
 );
 
@@ -213,29 +244,31 @@ export async function getCachedBannerCategoryPage(
       if (catError) throw catError;
       if (!category) return null;
 
-      const from = (safePage - 1) * safeSize;
-      const to = from + safeSize - 1;
-
-      const { data: bannersData, count, error: bannerError } = await supabase
+      const { data: bannersData, error: bannerError } = await supabase
         .from('banners')
-        .select(PUBLIC_BANNER_COLUMNS, { count: 'exact' })
+        .select(PUBLIC_BANNER_COLUMNS)
         .contains('category_ids', [category.id])
         .eq('is_public', true)
-        .order('is_pinned', { ascending: false })
-        .order('pin_order', { ascending: true })
         .order('created_at', { ascending: false })
-        .range(from, to);
+        .limit(2000);
 
       if (bannerError) throw bannerError;
 
+      const sorted = sortBannersForCategory(
+        (bannersData ?? []) as BannerItem[],
+        category.id
+      );
+      const from = (safePage - 1) * safeSize;
+      const to = from + safeSize;
+
       return {
         category: category as BannerCategory,
-        banners: (bannersData ?? []) as BannerItem[],
-        totalCount: count ?? 0,
+        banners: sorted.slice(from, to),
+        totalCount: sorted.length,
       };
     },
     [
-      'public-banner-category-page-v1',
+      'public-banner-category-page-v2',
       normalizedSlug,
       String(safePage),
       String(safeSize),
