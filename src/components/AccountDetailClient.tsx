@@ -26,6 +26,16 @@ interface AccountDetailClientProps {
   settings?: InstallmentSettings;
 }
 
+function resolveAccountPlanMode(
+  tags: string[] | undefined,
+  price: number
+): 'weekly' | 'monthly' {
+  const normalized = (tags ?? []).map((t) => t.trim());
+  if (normalized.includes('ผ่อนรายเดือน')) return 'monthly';
+  if (normalized.includes('ผ่อนรายสัปดาห์')) return 'weekly';
+  return getDefaultInstallmentMode(price);
+}
+
 export default function AccountDetailClient({
   account,
   settings,
@@ -41,9 +51,8 @@ export default function AccountDetailClient({
 
   const rates = useMemo(() => resolveInstallmentRates(settings), [settings]);
 
-  const planType = getDefaultInstallmentMode(account.price);
+  const planType = resolveAccountPlanMode(account.tags, account.price);
 
-  // ปลอดดอกและดาวน์ขั้นต่ำเป็นค่าของไอดีแต่ละใบ — ไม่มี fallback ไป settings
   const minDown =
     planType === 'weekly'
       ? account.min_down_weekly
@@ -289,15 +298,20 @@ export default function AccountDetailClient({
               <div className="frost-card sticky top-20 space-y-4 rounded-2xl p-5">
                 <div className="flex items-center justify-between gap-2 border-b border-white/[0.07] pb-3.5">
                   <div className="flex items-center gap-2.5">
-                    <span className="flex h-8 w-8 items-center justify-center rounded-xl border border-[#93C5FD]/30 bg-[#93C5FD]/10 text-[#93C5FD]">
+                    <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl border border-[#93C5FD]/30 bg-[#93C5FD]/10 text-[#93C5FD]">
                       <Calculator className="h-4 w-4" />
                     </span>
-                    <h2 className="text-sm font-bold text-[#F1F5F9]">
-                      คำนวณยอดผ่อน
-                    </h2>
+                    <div>
+                      <h2 className="text-sm font-bold text-[#F1F5F9]">
+                        คำนวณยอดผ่อน
+                      </h2>
+                      <p className="text-[11px] text-zinc-400">
+                        เป็นการคำนวณคร่าวๆ สามารถคุยในแชทได้
+                      </p>
+                    </div>
                   </div>
 
-                  <span className="rounded-full border border-[#93C5FD]/35 bg-[#93C5FD]/12 px-3 py-1 text-xs font-semibold text-[#93C5FD]">
+                  <span className="shrink-0 rounded-full border border-[#93C5FD]/35 bg-[#93C5FD]/12 px-3 py-1 text-xs font-semibold text-[#93C5FD]">
                     ผ่อนราย{unitLabel}
                   </span>
                 </div>

@@ -21,6 +21,16 @@ interface AccountCatalogClientProps {
 
 type PublicStatusFilter = 'ALL' | 'Available' | 'Installment' | 'SoldOut';
 
+function resolveAccountPlanMode(
+  tags: string[] | undefined,
+  price: number
+): 'weekly' | 'monthly' {
+  const normalized = (tags ?? []).map((t) => t.trim());
+  if (normalized.includes('ผ่อนรายเดือน')) return 'monthly';
+  if (normalized.includes('ผ่อนรายสัปดาห์')) return 'weekly';
+  return getDefaultInstallmentMode(price);
+}
+
 export default function AccountCatalogClient({
   accounts,
   initialAccounts,
@@ -187,7 +197,7 @@ export default function AccountCatalogClient({
         <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-3 sm:gap-4 lg:grid-cols-4">
           {visibleAccounts.map((acc, index) => {
             const isMonthly =
-              getDefaultInstallmentMode(acc.price) === 'monthly';
+              resolveAccountPlanMode(acc.tags, acc.price) === 'monthly';
             const lowestDown = isMonthly
               ? acc.min_down_monthly
               : acc.min_down_weekly;

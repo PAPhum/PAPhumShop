@@ -5,14 +5,9 @@ import {
   X,
   Upload,
   Trash2,
-  Eye,
-  EyeOff,
   Loader2,
   Calendar,
   Phone,
-  Copy,
-  Check,
-  Sparkles,
 } from 'lucide-react';
 import {
   AccountPublic,
@@ -21,10 +16,7 @@ import {
   InstallmentSettings,
 } from '@/types/database';
 import { processImageToWebP } from '@/lib/image-processor';
-import {
-  MONTHLY_DEFAULT_PRICE_THRESHOLD,
-  getDefaultInstallmentMode,
-} from '@/lib/installment';
+import { getDefaultInstallmentMode } from '@/lib/installment';
 import ModalPortal from '@/components/ModalPortal';
 
 interface AccountFormModalProps {
@@ -35,6 +27,7 @@ interface AccountFormModalProps {
   defaultSettings: InstallmentSettings;
 }
 
+type InstallmentPlanMode = 'weekly' | 'monthly';
 type PhoneBindState = 'พร้อมเปลี่ยน' | 'รอเปลี่ยน' | 'ไม่ติด';
 type MailBindState =
   | 'พร้อมยก'
@@ -70,7 +63,8 @@ function getTodayIsoDate(): string {
   return `${y}-${m}-${d}`;
 }
 
-function parseBindingTags(tags: string[]) {
+function parseBindingTags(tags: string[], fallbackPrice: number) {
+  let installmentMode: InstallmentPlanMode | null = null;
   let phoneState: PhoneBindState = 'พร้อมเปลี่ยน';
   let phoneDay = '';
   let phoneMonth = '';
@@ -83,7 +77,11 @@ function parseBindingTags(tags: string[]) {
 
   for (const raw of tags) {
     const t = raw.trim();
-    if (t.startsWith('เบอร์รอเปลี่ยน')) {
+    if (t === 'ผ่อนรายเดือน') {
+      installmentMode = 'monthly';
+    } else if (t === 'ผ่อนรายสัปดาห์') {
+      installmentMode = 'weekly';
+    } else if (t.startsWith('เบอร์รอเปลี่ยน')) {
       phoneState = 'รอเปลี่ยน';
       const dm = splitDayMonth(t.replace('เบอร์รอเปลี่ยน', '').trim());
       phoneDay = dm.day;
@@ -124,6 +122,7 @@ function parseBindingTags(tags: string[]) {
   }
 
   return {
+    installmentMode: installmentMode ?? getDefaultInstallmentMode(fallbackPrice),
     phoneState,
     phoneDay,
     phoneMonth,
@@ -184,8 +183,6 @@ export default function AccountFormModal({
     total: number;
   } | null>(null);
 
-  const [showPasswords, setShowPasswords] = useState(false);
-  const [copiedRecovery, setCopiedRecovery] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const phoneMonthInputRef = useRef<HTMLInputElement | null>(null);
@@ -197,7 +194,11 @@ export default function AccountFormModal({
   const [cost, setCost] = useState('');
   const [purchaseDate, setPurchaseDate] = useState(getTodayIsoDate());
 
-  // เงื่อนไขผ่อนรายไอดี (กำหนดเองได้ทีละตัว)
+  // รูปแบบและเงื่อนไขผ่อน (แอดมินเลือกเอง)
+  const [installmentMode, setInstallmentMode] =
+    useState<InstallmentPlanMode>('weekly');
+  const [modeManuallyPicked, setModeManuallyPicked] = useState(false);
+
   const [minDownWeekly, setMinDownWeekly] = useState(
     String(defaultSettings.default_min_down_weekly ?? 1000)
   );
@@ -229,23 +230,9 @@ export default function AccountFormModal({
   const [mainImageUrl, setMainImageUrl] = useState('');
   const [galleryUrls, setGalleryUrls] = useState<string[]>([]);
 
-  // ข้อมูลลับ Garena & Gmail
-  const [gameUid, setGameUid] = useState('');
-  const [loginProvider, setLoginProvider] = useState('Garena');
-  const [username, setUsername] = useState('');
-  const [password, setPassword] = useState('');
-  const [authenticator, setAuthenticator] = useState('');
-
-  const [gmail, setGmail] = useState('');
-  const [gmailPassword, setGmailPassword] = useState('');
-  const [gmailAuthenticator, setGmailAuthenticator] = useState('');
-  const [gmailRecovery, setGmailRecovery] = useState('');
-  const [privateNotes, setPrivateNotes] = useState('');
-
   useEffect(() => {
     if (!isOpen) return;
     setError(null);
-    setShowPasswords(false);
     setGalleryProgress(null);
     setUploadingMain(false);
 
@@ -255,6 +242,8 @@ export default function AccountFormModal({
       setPrice('');
       setCost('');
       setPurchaseDate(getTodayIsoDate());
+      setInstallmentMode('weekly');
+      setModeManuallyPicked(false);
       setMinDownWeekly(String(defaultSettings.default_min_down_weekly ?? 1000));
       setMinDownMonthly(String(defaultSettings.default_min_down_monthly ?? 2000));
       setInterestFreeWeeks(String(defaultSettings.default_free_weeks ?? 2));
@@ -272,16 +261,6 @@ export default function AccountFormModal({
       setDescription('');
       setMainImageUrl('');
       setGalleryUrls([]);
-      setGameUid('');
-      setLoginProvider('Garena');
-      setUsername('');
-      setPassword('');
-      setAuthenticator('');
-      setGmail('');
-      setGmailPassword('');
-      setGmailAuthenticator('');
-      setGmailRecovery('');
-      setPrivateNotes('');
       return;
     }
 
@@ -317,7 +296,9 @@ export default function AccountFormModal({
       )
     );
 
-    const parsed = parseBindingTags(editingAccount.tags);
+    const parsed = parseBindingTags(editingAccount.tags, editingAccount.price);
+    setInstallmentMode(parsed.installmentMode);
+    setModeManuallyPicked(true);
     setPhoneState(parsed.phoneState);
     setPhoneDay(parsed.phoneDay);
     setPhoneMonth(parsed.phoneMonth);
@@ -336,21 +317,11 @@ export default function AccountFormModal({
     fetch(`/api/admin/accounts/${editingAccount.id}`)
       .then(async (res) => {
         const data = await res.json();
-        if (!res.ok) throw new Error(data.error ?? 'โหลดข้อมูลลับไม่สำเร็จ');
+        if (!res.ok) throw new Error(data.error ?? 'โหลดข้อมูลต้นทุนไม่สำเร็จ');
         const sec = data.secret as AccountSecretDecrypted;
         setCost(sec.cost ? String(sec.cost) : '');
         setPurchaseDate(sec.purchase_date || getTodayIsoDate());
         setPhoneOwner(sec.phone_owner ?? '');
-        setGameUid(sec.game_uid ?? '');
-        setLoginProvider(sec.login_provider || 'Garena');
-        setUsername(sec.username ?? '');
-        setPassword(sec.password ?? '');
-        setAuthenticator(sec.authenticator ?? '');
-        setGmail(sec.gmail ?? '');
-        setGmailPassword(sec.gmail_password ?? '');
-        setGmailAuthenticator(sec.gmail_authenticator ?? '');
-        setGmailRecovery(sec.gmail_recovery ?? '');
-        setPrivateNotes(sec.private_notes ?? '');
       })
       .catch((err) => setError(err.message))
       .finally(() => setLoadingSecret(false));
@@ -359,6 +330,13 @@ export default function AccountFormModal({
   if (!isOpen) return null;
 
   const isUploadingAny = uploadingMain || galleryProgress !== null;
+
+  const handlePriceChange = (val: string) => {
+    setPrice(val);
+    if (!modeManuallyPicked) {
+      setInstallmentMode(getDefaultInstallmentMode(Number(val) || 0));
+    }
+  };
 
   const handleMainImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -397,13 +375,6 @@ export default function AccountFormModal({
     }
   };
 
-  const formatBackupCodes = () => {
-    const matches = gmailRecovery.match(/\b\d{8}\b/g);
-    if (matches && matches.length > 0) {
-      setGmailRecovery(matches.join('\n'));
-    }
-  };
-
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!code.trim()) {
@@ -430,6 +401,9 @@ export default function AccountFormModal({
           ? `${mailDay.trim().padStart(2, '0')}/${mailMonth.trim().padStart(2, '0')}`
           : mailDay.trim();
 
+      const planTag =
+        installmentMode === 'monthly' ? 'ผ่อนรายเดือน' : 'ผ่อนรายสัปดาห์';
+
       const phoneTag =
         phoneState === 'ไม่ติด'
           ? 'ไม่ติดเบอร์'
@@ -450,7 +424,7 @@ export default function AccountFormModal({
         .map((t) => t.trim())
         .filter(Boolean);
 
-      const tags = [phoneTag, mailTag, fbTag, cardTag, ...extraTags];
+      const tags = [planTag, phoneTag, mailTag, fbTag, cardTag, ...extraTags];
 
       const endpoint = editingAccount
         ? `/api/admin/accounts/${editingAccount.id}`
@@ -474,16 +448,6 @@ export default function AccountFormModal({
           description,
           main_image_url: mainImageUrl || null,
           gallery_urls: galleryUrls,
-          game_uid: gameUid,
-          login_provider: loginProvider || 'Garena',
-          username,
-          password,
-          authenticator,
-          gmail,
-          gmail_password: gmailPassword,
-          gmail_authenticator: gmailAuthenticator,
-          gmail_recovery: gmailRecovery,
-          private_notes: privateNotes,
         }),
       });
 
@@ -507,17 +471,6 @@ export default function AccountFormModal({
       setSaving(false);
     }
   };
-
-  const priceNum = Number(price) || 0;
-  const isMonthlyTier = getDefaultInstallmentMode(priceNum) === 'monthly';
-  const thresholdLabel =
-    MONTHLY_DEFAULT_PRICE_THRESHOLD.toLocaleString('en-US');
-  const installmentRuleLabel =
-    priceNum <= 0
-      ? 'ยังไม่ระบุราคาขาย (กรอกทีหลังตอนตัดรูปเสร็จได้)'
-      : isMonthlyTier
-        ? `ราคา ${thresholdLabel} ขึ้นไป → ผ่อนรายเดือน`
-        : `ต่ำกว่า ${thresholdLabel} → ผ่อนรายสัปดาห์`;
 
   const galleryPercent = galleryProgress
     ? Math.round((galleryProgress.done / galleryProgress.total) * 100)
@@ -548,7 +501,7 @@ export default function AccountFormModal({
           {loadingSecret ? (
             <div className="flex items-center justify-center gap-2 py-12 text-xs text-zinc-400">
               <Loader2 className="h-4 w-4 animate-spin text-[#93C5FD]" />
-              <span>กำลังถอดรหัสข้อมูลลับ...</span>
+              <span>กำลังโหลดข้อมูล...</span>
             </div>
           ) : (
             <form onSubmit={handleSubmit} autoComplete="off" className="space-y-4">
@@ -589,7 +542,7 @@ export default function AccountFormModal({
                       type="number"
                       placeholder="0"
                       value={price}
-                      onChange={(e) => setPrice(e.target.value)}
+                      onChange={(e) => handlePriceChange(e.target.value)}
                       className="w-full rounded-lg border border-white/[0.1] bg-[#111216] px-3 py-2 font-[family-name:var(--font-mono)] text-sm font-semibold text-[#93C5FD] placeholder:text-zinc-600 focus:border-[#93C5FD]/60 focus:outline-none"
                     />
                   </div>
@@ -619,74 +572,103 @@ export default function AccountFormModal({
                   </div>
                 </div>
 
-                {/* ตั้งค่าเงื่อนไขผ่อนเฉพาะไอดีนี้ */}
+                {/* เลือกรูปแบบและเงื่อนไขผ่อนของไอดีนี้ */}
                 <div className="rounded-lg border border-white/[0.06] bg-[#111216]/70 p-2.5">
-                  <div className="mb-2 flex flex-wrap items-center justify-between gap-1">
-                    <span className="text-[11px] font-medium text-[#93C5FD]">
-                      {installmentRuleLabel}
-                    </span>
+                  <div className="mb-2.5 flex flex-wrap items-center justify-between gap-2">
+                    <div className="flex items-center gap-1.5">
+                      <span className="text-[11px] font-medium text-zinc-300">
+                        รูปแบบการผ่อน:
+                      </span>
+                      {(
+                        [
+                          { id: 'weekly', label: 'ผ่อนรายสัปดาห์' },
+                          { id: 'monthly', label: 'ผ่อนรายเดือน' },
+                        ] as const
+                      ).map((opt) => (
+                        <button
+                          key={opt.id}
+                          type="button"
+                          onClick={() => {
+                            setInstallmentMode(opt.id);
+                            setModeManuallyPicked(true);
+                          }}
+                          className={`rounded-md px-2.5 py-1 text-xs font-semibold transition-colors ${
+                            installmentMode === opt.id
+                              ? 'bg-[#F1F5F9] text-[#0A0A0D]'
+                              : 'border border-white/[0.1] bg-[#0A0A0D] text-zinc-400 hover:text-zinc-200'
+                          }`}
+                        >
+                          {opt.label}
+                        </button>
+                      ))}
+                    </div>
+
                     <span className="text-[11px] text-zinc-500">
                       กำหนดเงื่อนไขผ่อนเฉพาะไอดีนี้ได้เอง
                     </span>
                   </div>
 
-                  <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-4">
-                    <div>
-                      <label className="mb-1 block text-[11px] text-zinc-400">
-                        ดาวน์ขั้นต่ำ (รายสัปดาห์)
-                      </label>
-                      <input
-                        type="number"
-                        min={0}
-                        step={100}
-                        value={minDownWeekly}
-                        onChange={(e) => setMinDownWeekly(e.target.value)}
-                        className="w-full rounded-md border border-white/[0.1] bg-[#0A0A0D] px-2.5 py-1.5 font-[family-name:var(--font-mono)] text-xs text-[#F1F5F9] focus:border-[#93C5FD]/60 focus:outline-none"
-                      />
-                    </div>
+                  {installmentMode === 'weekly' ? (
+                    <div className="grid grid-cols-2 gap-2.5">
+                      <div>
+                        <label className="mb-1 block text-[11px] text-zinc-400">
+                          ดาวน์ขั้นต่ำ (รายสัปดาห์)
+                        </label>
+                        <input
+                          type="number"
+                          min={0}
+                          step={100}
+                          value={minDownWeekly}
+                          onChange={(e) => setMinDownWeekly(e.target.value)}
+                          className="w-full rounded-md border border-white/[0.1] bg-[#0A0A0D] px-2.5 py-1.5 font-[family-name:var(--font-mono)] text-xs text-[#F1F5F9] focus:border-[#93C5FD]/60 focus:outline-none"
+                        />
+                      </div>
 
-                    <div>
-                      <label className="mb-1 block text-[11px] text-zinc-400">
-                        ปลอดดอก (กี่สัปดาห์)
-                      </label>
-                      <input
-                        type="number"
-                        min={0}
-                        max={52}
-                        value={interestFreeWeeks}
-                        onChange={(e) => setInterestFreeWeeks(e.target.value)}
-                        className="w-full rounded-md border border-white/[0.1] bg-[#0A0A0D] px-2.5 py-1.5 font-[family-name:var(--font-mono)] text-xs font-semibold text-[#93C5FD] focus:border-[#93C5FD]/60 focus:outline-none"
-                      />
+                      <div>
+                        <label className="mb-1 block text-[11px] text-zinc-400">
+                          ปลอดดอก (กี่สัปดาห์)
+                        </label>
+                        <input
+                          type="number"
+                          min={0}
+                          max={52}
+                          value={interestFreeWeeks}
+                          onChange={(e) => setInterestFreeWeeks(e.target.value)}
+                          className="w-full rounded-md border border-white/[0.1] bg-[#0A0A0D] px-2.5 py-1.5 font-[family-name:var(--font-mono)] text-xs font-semibold text-[#93C5FD] focus:border-[#93C5FD]/60 focus:outline-none"
+                        />
+                      </div>
                     </div>
+                  ) : (
+                    <div className="grid grid-cols-2 gap-2.5">
+                      <div>
+                        <label className="mb-1 block text-[11px] text-zinc-400">
+                          ดาวน์ขั้นต่ำ (รายเดือน)
+                        </label>
+                        <input
+                          type="number"
+                          min={0}
+                          step={100}
+                          value={minDownMonthly}
+                          onChange={(e) => setMinDownMonthly(e.target.value)}
+                          className="w-full rounded-md border border-white/[0.1] bg-[#0A0A0D] px-2.5 py-1.5 font-[family-name:var(--font-mono)] text-xs text-[#F1F5F9] focus:border-[#93C5FD]/60 focus:outline-none"
+                        />
+                      </div>
 
-                    <div>
-                      <label className="mb-1 block text-[11px] text-zinc-400">
-                        ดาวน์ขั้นต่ำ (รายเดือน)
-                      </label>
-                      <input
-                        type="number"
-                        min={0}
-                        step={100}
-                        value={minDownMonthly}
-                        onChange={(e) => setMinDownMonthly(e.target.value)}
-                        className="w-full rounded-md border border-white/[0.1] bg-[#0A0A0D] px-2.5 py-1.5 font-[family-name:var(--font-mono)] text-xs text-[#F1F5F9] focus:border-[#93C5FD]/60 focus:outline-none"
-                      />
+                      <div>
+                        <label className="mb-1 block text-[11px] text-zinc-400">
+                          ปลอดดอก (กี่เดือน)
+                        </label>
+                        <input
+                          type="number"
+                          min={0}
+                          max={24}
+                          value={interestFreeMonths}
+                          onChange={(e) => setInterestFreeMonths(e.target.value)}
+                          className="w-full rounded-md border border-white/[0.1] bg-[#0A0A0D] px-2.5 py-1.5 font-[family-name:var(--font-mono)] text-xs font-semibold text-[#93C5FD] focus:border-[#93C5FD]/60 focus:outline-none"
+                        />
+                      </div>
                     </div>
-
-                    <div>
-                      <label className="mb-1 block text-[11px] text-zinc-400">
-                        ปลอดดอก (กี่เดือน)
-                      </label>
-                      <input
-                        type="number"
-                        min={0}
-                        max={24}
-                        value={interestFreeMonths}
-                        onChange={(e) => setInterestFreeMonths(e.target.value)}
-                        className="w-full rounded-md border border-white/[0.1] bg-[#0A0A0D] px-2.5 py-1.5 font-[family-name:var(--font-mono)] text-xs font-semibold text-[#93C5FD] focus:border-[#93C5FD]/60 focus:outline-none"
-                      />
-                    </div>
-                  </div>
+                  )}
                 </div>
               </div>
 
@@ -1029,209 +1011,6 @@ export default function AccountFormModal({
                       </p>
                     </div>
                   )}
-                </div>
-              </div>
-
-              {/* แถวที่ 4: ข้อมูลลับ Garena & Gmail */}
-              <div className="space-y-4 rounded-xl border border-[#93C5FD]/25 bg-[#0A0A0D] p-3.5">
-                <div className="flex items-center justify-between">
-                  <span className="text-xs font-semibold text-[#93C5FD]">
-                    ข้อมูลลับบัญชี (เข้ารหัส AES-256 + Sync Sheet)
-                  </span>
-                  <button
-                    type="button"
-                    onClick={() => setShowPasswords((v) => !v)}
-                    className="inline-flex items-center gap-1 text-xs text-zinc-400 hover:text-white"
-                  >
-                    {showPasswords ? (
-                      <EyeOff className="h-3.5 w-3.5" />
-                    ) : (
-                      <Eye className="h-3.5 w-3.5" />
-                    )}
-                    <span>{showPasswords ? 'ซ่อนรหัส' : 'แสดงรหัส'}</span>
-                  </button>
-                </div>
-
-                {/* ส่วน Garena */}
-                <div className="space-y-2.5 rounded-lg border border-white/[0.06] bg-[#111216]/60 p-3">
-                  <div className="flex items-center justify-between">
-                    <span className="text-xs font-semibold text-[#F1F5F9]">Garena</span>
-                    <div className="flex items-center gap-2">
-                      <span className="text-[11px] text-zinc-500">ช่องทางล็อกอิน</span>
-                      <input
-                        type="text"
-                        value={loginProvider}
-                        onChange={(e) => setLoginProvider(e.target.value)}
-                        className="w-24 rounded border border-white/[0.1] bg-[#0A0A0D] px-2 py-0.5 text-center font-[family-name:var(--font-mono)] text-xs text-[#93C5FD]"
-                      />
-                    </div>
-                  </div>
-
-                  <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-3">
-                    <div>
-                      <label className="mb-1 block text-[11px] text-zinc-400">Username</label>
-                      <input
-                        type="text"
-                        value={username}
-                        onChange={(e) => setUsername(e.target.value)}
-                        className="w-full rounded-md border border-white/[0.1] bg-[#0A0A0D] px-3 py-1.5 font-[family-name:var(--font-mono)] text-xs text-[#F1F5F9]"
-                      />
-                    </div>
-
-                    <div>
-                      <label className="mb-1 block text-[11px] text-zinc-400">Password</label>
-                      <input
-                        type="text"
-                        value={password}
-                        onChange={(e) => setPassword(e.target.value)}
-                        style={
-                          !showPasswords
-                            ? ({ WebkitTextSecurity: 'disc' } as React.CSSProperties)
-                            : undefined
-                        }
-                        className="w-full rounded-md border border-white/[0.1] bg-[#0A0A0D] px-3 py-1.5 font-[family-name:var(--font-mono)] text-xs text-[#F1F5F9]"
-                      />
-                    </div>
-
-                    <div>
-                      <label className="mb-1 block text-[11px] text-zinc-400">
-                        Authenticator
-                      </label>
-                      <input
-                        type="text"
-                        value={authenticator}
-                        onChange={(e) => setAuthenticator(e.target.value)}
-                        placeholder="Secret Key 2FA"
-                        style={
-                          !showPasswords
-                            ? ({ WebkitTextSecurity: 'disc' } as React.CSSProperties)
-                            : undefined
-                        }
-                        className="w-full rounded-md border border-white/[0.1] bg-[#0A0A0D] px-3 py-1.5 font-[family-name:var(--font-mono)] text-xs text-[#F1F5F9] placeholder:text-zinc-600"
-                      />
-                    </div>
-                  </div>
-                </div>
-
-                {/* ส่วน Gmail */}
-                <div className="space-y-2.5 rounded-lg border border-white/[0.06] bg-[#111216]/60 p-3">
-                  <span className="block text-xs font-semibold text-[#F1F5F9]">Gmail</span>
-
-                  <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-3">
-                    <div>
-                      <label className="mb-1 block text-[11px] text-zinc-400">Gmail</label>
-                      <input
-                        type="text"
-                        value={gmail}
-                        onChange={(e) => setGmail(e.target.value)}
-                        className="w-full rounded-md border border-white/[0.1] bg-[#0A0A0D] px-3 py-1.5 font-[family-name:var(--font-mono)] text-xs text-[#F1F5F9]"
-                      />
-                    </div>
-
-                    <div>
-                      <label className="mb-1 block text-[11px] text-zinc-400">Password</label>
-                      <input
-                        type="text"
-                        value={gmailPassword}
-                        onChange={(e) => setGmailPassword(e.target.value)}
-                        style={
-                          !showPasswords
-                            ? ({ WebkitTextSecurity: 'disc' } as React.CSSProperties)
-                            : undefined
-                        }
-                        className="w-full rounded-md border border-white/[0.1] bg-[#0A0A0D] px-3 py-1.5 font-[family-name:var(--font-mono)] text-xs text-[#F1F5F9]"
-                      />
-                    </div>
-
-                    <div>
-                      <label className="mb-1 block text-[11px] text-zinc-400">
-                        Authenticator
-                      </label>
-                      <input
-                        type="text"
-                        value={gmailAuthenticator}
-                        onChange={(e) => setGmailAuthenticator(e.target.value)}
-                        placeholder="Secret Key 2FA"
-                        style={
-                          !showPasswords
-                            ? ({ WebkitTextSecurity: 'disc' } as React.CSSProperties)
-                            : undefined
-                        }
-                        className="w-full rounded-md border border-white/[0.1] bg-[#0A0A0D] px-3 py-1.5 font-[family-name:var(--font-mono)] text-xs text-[#F1F5F9] placeholder:text-zinc-600"
-                      />
-                    </div>
-                  </div>
-
-                  {/* รหัสกู้ 8 หลัก 10 ชุด (Textarea) */}
-                  <div>
-                    <div className="mb-1 flex items-center justify-between gap-2">
-                      <label className="text-[11px] text-zinc-400">
-                        รหัสกู้สำรอง 8 หลัก (วางทั้ง 10 ชุดได้เลย)
-                      </label>
-                      <div className="flex items-center gap-2">
-                        <button
-                          type="button"
-                          onClick={formatBackupCodes}
-                          className="inline-flex items-center gap-1 text-[11px] text-zinc-400 hover:text-[#93C5FD]"
-                        >
-                          <Sparkles className="h-3 w-3" />
-                          <span>จัดเรียง</span>
-                        </button>
-                        {gmailRecovery.trim() && (
-                          <button
-                            type="button"
-                            onClick={async () => {
-                              await navigator.clipboard.writeText(gmailRecovery);
-                              setCopiedRecovery(true);
-                              setTimeout(() => setCopiedRecovery(false), 1800);
-                            }}
-                            className="inline-flex items-center gap-1 text-[11px] text-[#93C5FD] hover:underline"
-                          >
-                            {copiedRecovery ? (
-                              <>
-                                <Check className="h-3 w-3" />
-                                <span>คัดลอกแล้ว</span>
-                              </>
-                            ) : (
-                              <>
-                                <Copy className="h-3 w-3" />
-                                <span>คัดลอก</span>
-                              </>
-                            )}
-                          </button>
-                        )}
-                      </div>
-                    </div>
-                    <textarea
-                      rows={3}
-                      value={gmailRecovery}
-                      onChange={(e) => setGmailRecovery(e.target.value)}
-                      placeholder={'วางรหัสสำรอง 8 หลัก (10 ชุด) ที่ก๊อปมาจาก Google ได้เลย'}
-                      className="w-full rounded-md border border-white/[0.1] bg-[#0A0A0D] px-3 py-2 font-[family-name:var(--font-mono)] text-xs leading-relaxed text-[#F1F5F9] placeholder:text-zinc-600 focus:border-[#93C5FD]/60 focus:outline-none"
-                    />
-                  </div>
-                </div>
-
-                {/* Game UID & หมายเหตุ */}
-                <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-                  <div>
-                    <label className="mb-1 block text-[11px] text-zinc-400">Game UID</label>
-                    <input
-                      type="text"
-                      value={gameUid}
-                      onChange={(e) => setGameUid(e.target.value)}
-                      className="w-full rounded-md border border-white/[0.1] bg-[#111216] px-3 py-1.5 font-[family-name:var(--font-mono)] text-xs text-[#F1F5F9]"
-                    />
-                  </div>
-                  <div className="sm:col-span-2">
-                    <label className="mb-1 block text-[11px] text-zinc-400">หมายเหตุส่วนตัว</label>
-                    <input
-                      type="text"
-                      value={privateNotes}
-                      onChange={(e) => setPrivateNotes(e.target.value)}
-                      className="w-full rounded-md border border-white/[0.1] bg-[#111216] px-3 py-1.5 text-xs text-[#F1F5F9]"
-                    />
-                  </div>
                 </div>
               </div>
 
