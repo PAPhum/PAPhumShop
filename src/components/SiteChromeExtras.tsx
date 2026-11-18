@@ -1,5 +1,6 @@
 'use client';
 
+import { useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import {
@@ -18,26 +19,57 @@ export default function SiteChromeExtras() {
   const isAdminRoute = pathname.startsWith('/admin');
   const isDeliverRoute = pathname.startsWith('/deliver');
 
+  const footerRef = useRef<HTMLElement | null>(null);
+  const [hideFloatingCta, setHideFloatingCta] = useState(false);
+
+  useEffect(() => {
+    if (isAdminRoute || isDeliverRoute) return;
+    const footerEl = footerRef.current;
+    if (!footerEl) return;
+
+    const observer = new IntersectionObserver(
+      ([entry]) => {
+        setHideFloatingCta(entry.isIntersecting);
+      },
+      {
+        root: null,
+        threshold: 0.05,
+      }
+    );
+
+    observer.observe(footerEl);
+    return () => observer.disconnect();
+  }, [isAdminRoute, isDeliverRoute, pathname]);
+
   if (isAdminRoute || isDeliverRoute) {
     return null;
   }
 
   return (
     <>
-      {/* ปุ่มลอยมุมขวาล่าง */}
+      {/* ปุ่มลอยมุมขวาล่าง (สไลด์หลบออกทางขวาเมื่อเลื่อนถึง Footer) */}
       <a
         href={FACEBOOK_PROFILE_URL}
         target="_blank"
         rel="noopener noreferrer"
         aria-label="ติดต่อ Facebook ร้าน PAPhum"
-        className="fixed bottom-20 right-5 z-40 inline-flex h-11 items-center gap-2 rounded-full border border-[#93C5FD]/40 bg-[#12141C]/90 px-4 text-xs font-semibold text-[#F1F5F9] shadow-[0_12px_32px_rgba(0,0,0,0.65)] backdrop-blur-md transition-all active:scale-95 hover:border-[#93C5FD] hover:bg-[#191D29] hover:text-[#93C5FD]"
+        aria-hidden={hideFloatingCta}
+        tabIndex={hideFloatingCta ? -1 : 0}
+        className={`fixed bottom-20 right-5 z-40 inline-flex h-11 items-center gap-2 rounded-full border border-[#93C5FD]/40 bg-[#12141C]/90 px-4 text-xs font-semibold text-[#F1F5F9] shadow-[0_12px_32px_rgba(0,0,0,0.65)] backdrop-blur-md transition-all duration-500 ease-[cubic-bezier(0.22,1,0.36,1)] active:scale-95 hover:border-[#93C5FD] hover:bg-[#191D29] hover:text-[#93C5FD] ${
+          hideFloatingCta
+            ? 'pointer-events-none translate-x-[135%] opacity-0'
+            : 'translate-x-0 opacity-100'
+        }`}
       >
         <MessageCircle className="h-4 w-4 text-[#93C5FD]" />
         <span>ติดต่อเฟสร้าน</span>
       </a>
 
       {/* แถบ Footer ด้านล่างสุด */}
-      <footer className="mt-auto border-t border-white/[0.08] bg-[#08090D]/80 backdrop-blur-xl">
+      <footer
+        ref={footerRef}
+        className="mt-auto border-t border-white/[0.08] bg-[#08090D]/80 backdrop-blur-xl"
+      >
         <div className="mx-auto flex max-w-6xl flex-col gap-5 px-4 py-8 sm:flex-row sm:items-center sm:justify-between sm:px-6">
           <div className="space-y-2">
             <div className="flex items-center gap-2.5">
