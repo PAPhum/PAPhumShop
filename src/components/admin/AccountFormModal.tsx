@@ -35,8 +35,14 @@ interface AccountFormModalProps {
   defaultSettings: InstallmentSettings;
 }
 
-type PhoneBindState = 'พร้อมเปลี่ยน' | 'รอเปลี่ยน';
-type MailBindState = 'พร้อมยก' | 'รอยก' | 'พร้อมเปลี่ยน' | 'รอเปลี่ยน';
+type PhoneBindState = 'พร้อมเปลี่ยน' | 'รอเปลี่ยน' | 'ไม่ติด';
+type MailBindState =
+  | 'พร้อมยก'
+  | 'รอยก'
+  | 'พร้อมเปลี่ยน'
+  | 'รอเปลี่ยน'
+  | 'ไม่ติด'
+  | 'ไม่ยืนยัน';
 type BoolBindState = 'ไม่ติด' | 'ติด';
 
 function splitDayMonth(rawDate: string): { day: string; month: string } {
@@ -84,6 +90,8 @@ function parseBindingTags(tags: string[]) {
       phoneMonth = dm.month;
     } else if (t === 'เบอร์พร้อมเปลี่ยน') {
       phoneState = 'พร้อมเปลี่ยน';
+    } else if (t === 'ไม่ติดเบอร์' || t === 'เบอร์ไม่ติด') {
+      phoneState = 'ไม่ติด';
     } else if (t.startsWith('เมลรอยก')) {
       mailState = 'รอยก';
       const dm = splitDayMonth(t.replace('เมลรอยก', '').trim());
@@ -98,6 +106,10 @@ function parseBindingTags(tags: string[]) {
       mailState = 'พร้อมยก';
     } else if (t === 'เมลพร้อมเปลี่ยน') {
       mailState = 'พร้อมเปลี่ยน';
+    } else if (t === 'เมลไม่ติด' || t === 'ไม่ติดเมล') {
+      mailState = 'ไม่ติด';
+    } else if (t === 'เมลไม่ยืนยัน' || t === 'ไม่ยืนยันเมล') {
+      mailState = 'ไม่ยืนยัน';
     } else if (t === 'ติดเฟส') {
       fbState = 'ติด';
     } else if (t === 'ไม่ติดเฟส' || t === 'ไม่ติดเฟสบุ๊ค') {
@@ -419,9 +431,11 @@ export default function AccountFormModal({
           : mailDay.trim();
 
       const phoneTag =
-        phoneState === 'รอเปลี่ยน'
-          ? `เบอร์รอเปลี่ยน${phoneDateStr ? ` ${phoneDateStr}` : ''}`
-          : 'เบอร์พร้อมเปลี่ยน';
+        phoneState === 'ไม่ติด'
+          ? 'ไม่ติดเบอร์'
+          : phoneState === 'รอเปลี่ยน'
+            ? `เบอร์รอเปลี่ยน${phoneDateStr ? ` ${phoneDateStr}` : ''}`
+            : 'เบอร์พร้อมเปลี่ยน';
 
       const mailTag =
         mailState === 'รอเปลี่ยน' || mailState === 'รอยก'
@@ -455,7 +469,7 @@ export default function AccountFormModal({
           interest_free_weeks: Math.max(0, Number(interestFreeWeeks) || 0),
           interest_free_months: Math.max(0, Number(interestFreeMonths) || 0),
           purchase_date: purchaseDate,
-          phone_owner: phoneOwner.trim(),
+          phone_owner: phoneState === 'ไม่ติด' ? '' : phoneOwner.trim(),
           tags,
           description,
           main_image_url: mainImageUrl || null,
@@ -687,7 +701,9 @@ export default function AccountFormModal({
                   <div className="space-y-2 rounded-lg border border-white/[0.06] bg-[#111216]/60 p-2.5">
                     <label className="block text-[11px] text-zinc-400">เบอร์</label>
                     <div className="flex flex-wrap items-center gap-1.5">
-                      {(['พร้อมเปลี่ยน', 'รอเปลี่ยน'] as PhoneBindState[]).map((opt) => (
+                      {(
+                        ['พร้อมเปลี่ยน', 'รอเปลี่ยน', 'ไม่ติด'] as PhoneBindState[]
+                      ).map((opt) => (
                         <button
                           key={opt}
                           type="button"
@@ -744,16 +760,18 @@ export default function AccountFormModal({
                       )}
                     </div>
 
-                    <div className="relative pt-0.5">
-                      <Phone className="pointer-events-none absolute left-2.5 top-1/2 h-3 w-3 -translate-y-1/2 text-zinc-500" />
-                      <input
-                        type="text"
-                        value={phoneOwner}
-                        onChange={(e) => setPhoneOwner(e.target.value)}
-                        placeholder="เบอร์ใคร / เบอร์เช่า / 08x..."
-                        className="w-full rounded-md border border-white/[0.09] bg-[#0A0A0D] py-1.5 pl-7 pr-2.5 text-xs text-[#F1F5F9] placeholder:text-zinc-600 focus:border-[#93C5FD]/50 focus:outline-none"
-                      />
-                    </div>
+                    {phoneState !== 'ไม่ติด' && (
+                      <div className="relative pt-0.5">
+                        <Phone className="pointer-events-none absolute left-2.5 top-1/2 h-3 w-3 -translate-y-1/2 text-zinc-500" />
+                        <input
+                          type="text"
+                          value={phoneOwner}
+                          onChange={(e) => setPhoneOwner(e.target.value)}
+                          placeholder="เบอร์ใคร / เบอร์เช่า / 08x..."
+                          className="w-full rounded-md border border-white/[0.09] bg-[#0A0A0D] py-1.5 pl-7 pr-2.5 text-xs text-[#F1F5F9] placeholder:text-zinc-600 focus:border-[#93C5FD]/50 focus:outline-none"
+                        />
+                      </div>
+                    )}
                   </div>
 
                   {/* เมล */}
@@ -761,7 +779,14 @@ export default function AccountFormModal({
                     <label className="block text-[11px] text-zinc-400">เมล</label>
                     <div className="flex flex-wrap items-center gap-1.5">
                       {(
-                        ['พร้อมยก', 'รอยก', 'พร้อมเปลี่ยน', 'รอเปลี่ยน'] as MailBindState[]
+                        [
+                          'พร้อมยก',
+                          'รอยก',
+                          'พร้อมเปลี่ยน',
+                          'รอเปลี่ยน',
+                          'ไม่ติด',
+                          'ไม่ยืนยัน',
+                        ] as MailBindState[]
                       ).map((opt) => (
                         <button
                           key={opt}
