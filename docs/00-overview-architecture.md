@@ -31,8 +31,9 @@ export type AccountStatus = 'Unavailable' | 'Available' | 'Installment' | 'SoldO
 | `SoldOut` | ขายแล้ว | แสดง + ป้าย "ขายแล้ว" (`:34`) |
 | `Unavailable` | ปิดการขาย/ไม่พร้อม | **ไม่แสดง** — ถูกกรองที่ `src/app/store/page.tsx:14`, `src/app/id/[code]/page.tsx:29`, `src/components/AccountCatalogClient.tsx:58` |
 
-> **⚠️ ความไม่สอดคล้องที่ต้องรู้ก่อนอ่านเอกสารอื่น**
-> ค่าในโค้ดเป็นตัวพิมพ์แบบ PascalCase (`'Available'`) แต่ `CHECK` constraint ใน `supabase/migrations/001_initial_schema.sql:8` กำหนดเป็นตัวพิมพ์เล็ก `('available','installment','sold')` และ RLS ที่ `:117-120` ก็กรองด้วย `status = 'available'` → หาก DB จริงยึดตาม migration ทุก filter ของแอปจะไม่ match และการ INSERT จะชน CHECK constraint ทุกครั้ง รายละเอียดอยู่ใน `docs/04-security-audit.md` (หมวด H-4) และ `docs/05-database-normalize-and-optimize.md`
+> **✅ ยืนยันกับ production แล้ว (18 พ.ย. 2026)**
+> ค่าที่ใช้จริงคือ **PascalCase** และ `accounts.status` เป็น `text` default `'Unavailable'` (ดู `supabase/migrations/DB.md:18`) — view `accounts_public` ก็กรองด้วย `'Available','Installment','SoldOut'` (`DB.md:116`)
+> ส่วน `CHECK` ตัวพิมพ์เล็กที่ `supabase/migrations/001_initial_schema.sql:8` และ RLS `:117-120` เป็นของ **ไฟล์ migration ที่ล้าสมัย** ไม่ใช่ของ production → **ห้ามยึดไฟล์ 001 เป็นความจริง และห้ามเปลี่ยนสถานะเป็นตัวพิมพ์เล็ก** รายละเอียดอยู่ใน `docs/05-database-normalize-and-optimize.md` §1.1 และ §5.1
 
 ### 1.2 โมเดลการผ่อน 2 โหมด
 
@@ -191,7 +192,7 @@ flowchart TD
   RLS -->|"ผ่านเสมอ"| PG[("Postgres")]
 ```
 
-> ชั้น `middleware.ts` **ไม่มีอยู่ในโปรเจกต์** (ตรวจ glob `middleware.*` แล้วไม่พบ) และชั้น RLS ไม่ได้อ้าง `admin_roles` เลย → การป้องกันจริงพึ่ง Route Handler เท่านั้น ดู `docs/04-security-audit.md`
+> ชั้น `middleware.ts` **ไม่มีอยู่ในโปรเจกต์** (ตรวจ glob `middleware.*` แล้วไม่พบ) และ RLS อ้าง `admin_roles` **เฉพาะตาราง `accounts`** (`supabase/migrations/DB.md:129`) — อีก 5 ตารางยังเป็น policy `true` ให้ `authenticated` (`DB.md:125-145`) → การป้องกันที่เหลือพึ่ง Route Handler เท่านั้น ดู `docs/04-security-audit.md`
 
 ---
 
@@ -245,7 +246,8 @@ paphumshop/
 │   ├── 06-roadmap-and-new-features.md
 │   └── techdocs.md                    # เอกสารรุ่นก่อน (ถูกแทนที่แล้ว)
 ├── supabase/migrations/
-│   └── 001_initial_schema.sql         # 7 ตาราง, 12 policy, 3 index (188 บรรทัด)
+│   ├── DB.md                          # ⭐ production dump: 8 ตาราง + 1 view + policy จริง (145 บรรทัด)
+│   └── 001_initial_schema.sql         # เอกสารประวัติ (7 ตาราง) — ห้ามใช้สร้าง DB ใหม่
 ├── scripts/
 │   ├── google-apps-script.js          # doPost() รับ webhook (142 บรรทัด)
 │   ├── migrate-banners.ts             # CSV → R2 + Supabase (344 บรรทัด)
@@ -315,8 +317,8 @@ paphumshop/
 
 ## 8. ข้อจำกัดของสถาปัตยกรรมปัจจุบัน (สรุปผู้บริหาร)
 
-1. **ข้อมูลลับและข้อมูลสาธารณะไม่ได้แยกที่ชั้น Schema** — migration ออกแบบเป็น `accounts_public` + `accounts_secret` (`001_initial_schema.sql:5-41`) แต่โค้ดจริงใช้ตารางเดียวชื่อ `accounts` ที่รวม secret (`src/app/api/admin/accounts/route.ts:204-238`) และไม่มีคำสั่ง `CREATE VIEW` ในโปรเจกต์เลย
-2. **สิทธิ์ owner/staff ถูกบังคับเฉพาะฝั่งแอป** — RLS ให้ `authenticated` แบบ `USING (true)` 6 ตาราง (`001:122-133,141-145,153-157,165-181`) และไม่มี policy ใดอ้าง `admin_roles`
+1. **ข้อมูลลับและข้อมูลสาธารณะแยกกันที่ "วิว" ไม่ใช่ที่ตาราง** — production ใช้ตาราง `accounts` เดียวที่เก็บทั้งข้อมูลสาธารณะและ ciphertext (`supabase/migrations/DB.md:16-41`) แล้วสร้าง **view `accounts_public`** กรองเฉพาะ 3 สถานะเพื่อให้หน้าเว็บอ่าน (`DB.md:114-116`) → ความปลอดภัยจึงขึ้นกับว่าใครมีสิทธิ์บนตารางฐาน ไม่ใช่บนวิว และตาราง `accounts_secret` ที่ออกแบบไว้ก็ไม่มีโค้ดใช้
+2. **สิทธิ์ owner/staff ถูกบังคับไม่สม่ำเสมอ** — `accounts` บังคับ owner ที่ชั้น DB แล้ว (`DB.md:129`) แต่ `accounts_secret`, `deliveries`, `banners`, `banner_categories`, `installment_settings` ยังมี policy `true` ให้ `authenticated` (`DB.md:125-145`) และ `admin_roles` ไม่ถูกอ้างใน policy ของตารางเหล่านี้
 3. **ไม่มี middleware** — ทุก route ต้องป้องกันตัวเอง ซึ่งทำไม่สม่ำเสมอ (banner 3 route ไม่เช็ก role/PIN)
 4. **ไม่มีชั้น cache** — เปิด Cache Components แต่ไม่มีการใช้ `use cache`/`cacheTag` เลย; หน้า `/banners` ดึง banner ทั้งตารางมา serialize ลง client ทุกครั้ง (`src/app/banners/page.tsx:26-65`)
 5. **ไม่มี observability** — ไม่มี `console.*` ใน `src/` เลย, ไม่มี audit log, ไม่มี error boundary (`error.tsx`) หรือ `not-found.tsx`
@@ -326,16 +328,16 @@ paphumshop/
 
 ## 9. ภาคผนวก: เอกสารรุ่นก่อน (`docs/techdocs.md`) ที่ถูกแทนที่
 
-`docs/techdocs.md` เป็นสเปกภาษาอังกฤษที่เขียนไว้ก่อนหน้าและ **ไม่ตรงกับโค้ดจริง 9 จุดสำคัญ** จึงถูกแทนที่ด้วยเอกสารชุดนี้ จุดที่ขัดกันมากที่สุด:
+`docs/techdocs.md` เป็นสเปกภาษาอังกฤษที่เขียนไว้ก่อนหน้าและ **ไม่ตรงกับไฟล์ migration ใน repository 9 จุดสำคัญ** (บางจุดตรงกับ production จริง) จึงถูกแทนที่ด้วยเอกสารชุดนี้ จุดที่ขัดกันมากที่สุด:
 
 | # | เอกสารเดิมระบุ | ความจริงในโค้ด |
 |---|---|---|
-| 1 | `accounts_public` เป็น VIEW | เป็น TABLE (`001_initial_schema.sql:5`) |
-| 2 | มีตาราง `accounts` เดียวเก็บ public + secret | migration แยก 2 ตาราง และไม่มีตาราง `accounts` |
-| 3 | ไม่กล่าวถึงระบบ role | โค้ดใช้ `admin_roles` (`src/app/admin/page.tsx:26`) แต่ไม่มีใน schema |
+| 1 | `accounts_public` เป็น VIEW | **จริงใน production** (`DB.md:114-116`) แต่เป็น TABLE ในไฟล์ `001_initial_schema.sql:5` → เอกสารเดิมถูกเรื่องนี้ แต่ไฟล์ migration ใน repo ผิด |
+| 2 | มีตาราง `accounts` เดียวเก็บ public + secret | **จริงใน production** (`DB.md:16-41`) — ไฟล์ migration 001 แยกเป็น `accounts_public` + `accounts_secret` และไม่มีตาราง `accounts` จึงล้าสมัย |
+| 3 | ไม่กล่าวถึงระบบ role | **มีจริงใน production**: ตาราง `admin_roles` (`DB.md:68-71`) และ policy owner-only บน `accounts` (`DB.md:129`) — แต่ไม่มีในไฟล์ migration 001 |
 | 4 | PIN hash = PBKDF2 | ใช้ **scrypt** (`src/lib/crypto.ts:75,89`) |
 | 5 | PIN cookie อายุ 15 นาที, `sameSite: lax` | 30 วัน, `strict` (`src/app/api/admin/pin/route.ts:7,85`) |
-| 6 | `deliveries` อ่านได้เฉพาะ token ที่ตรง | RLS ให้ anon อ่านทุกแถวที่ยังไม่หมดอายุ (`001:172-175`) |
+| 6 | `deliveries` อ่านได้เฉพาะ token ที่ตรง | RLS ให้ anon อ่าน **ทุกแถวที่ยังไม่หมดอายุ** — ยืนยันใน production ที่ `DB.md:131,133` → enumerate ได้ (ดู `docs/04` C-2) |
 | 7 | มี `scripts/migrate-legacy-banners.ts` (±1,230 รูป, sharp, watermark) | ไฟล์ **0 bytes**; ตัวจริงคือ `migrate-banners.ts` ที่อ่าน CSV และไม่ใช้ sharp |
 | 8 | endpoint `/api/upload/presign` | จริงคือ `/api/admin/upload/presign` (และ UI ยังเรียก path เก่าที่ `BannerCategoryManager.tsx:39`) |
 | 9 | มี `/api/admin/logout`, `/api/admin/settings`, `DELETE /api/admin/pin` | ทั้ง 3 ไม่มีอยู่จริง |

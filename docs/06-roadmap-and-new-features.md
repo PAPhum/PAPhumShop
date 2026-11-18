@@ -119,8 +119,8 @@ npm test            # ต้องผ่านทั้ง 3 ไฟล์เด�
 
 | ลำดับ | งาน | รายละเอียด | อ้างอิง |
 |---|---|---|---|
-| 2-1 | รัน migration 002 (enum, `accounts`, `account_secrets`, `admin_roles`, junction) | ใช้ SQL ใน `05` §5 | `docs/05...` §5.1–5.4 |
-| 2-2 | เปลี่ยน `status` เป็นตัวพิมพ์เล็กทั้ง 4 ชั้น | type, CHECK, RLS, UI | `docs/05...` §2.3 |
+| 2-1 | ใช้ migration **003+** เฉพาะสิ่งที่ยังขาด (เพิ่มคอลัมน์/enum/junction) — **ห้าม recreate ตาราง `accounts` / `admin_roles` / view `accounts_public`** ที่มีอยู่แล้ว | ใช้ SQL ใน `05` §5 | `docs/05...` §5.1–5.4, `DB.md:16-41,68-71,114-116` |
+| 2-2 | คง `status` เป็น **PascalCase** ทั้ง 4 ชั้น (type, CHECK, RLS, UI) ตาม production — ห้ามเปลี่ยนเป็นตัวพิมพ์เล็ก | type, CHECK, RLS, UI | `docs/05...` §2.3, `DB.md:18` |
 | 2-3 | Backfill `banners.category_ids` → `banner_category_links` | ต้องตรวจจำนวนคู่ก่อน drop | `docs/05...` §5.4 |
 | 2-4 | สร้าง index 11 ตัว + trigger `updated_at` | SQL ใน `05` §5.5–5.6 | — |
 | 2-5 | เปลี่ยน `/banners` เป็น RPC `get_banner_sections` | 4–5 query → 1 | `docs/05...` §6.2 |
@@ -198,7 +198,7 @@ create table public.installment_payments (
 
 - สร้างแผนจากไอดีราคา 3,290 (weekly, ดาวน์ 1,000, 4 งวด) ได้ตาราง 4 แถวที่มียอดงวดละ **643** ตรงกับ `tests/lib/installment.test.ts:24`
 - บันทึกชำระงวดที่ 1 แล้ว `amount_paid = amount_due` และ `paid_at` ไม่ว่าง
-- เมื่อชำระครบทุกงวด `installment_plans.status = 'completed'` และ `accounts.status = 'sold'`
+- เมื่อชำระครบทุกงวด `installment_plans.status = 'completed'` และ `accounts.status = 'SoldOut'` (PascalCase ตาม production — `DB.md:18`)
 - หน้า `/admin` แสดง "ค้างชำระ N งวด" โดยคำนวณจาก `due_date < current_date and amount_paid < amount_due`
 - ไม่มี secret ใด ๆ ถูกส่งไปยัง client ของฟีเจอร์นี้
 
@@ -271,9 +271,9 @@ create table public.installment_payments (
 
 | การ์ด | สูตร |
 |---|---|
-| กำไรขั้นต้นเดือนนี้ | `sum(price - cost)` ของไอดีที่ `status = 'sold'` และ `updated_at` อยู่ในเดือน |
-| ต้นทุนคงค้าง (สต็อก) | `sum(cost)` ของไอดีที่ `status in ('available','installment')` |
-| มูลค่าสต็อกตามราคาขาย | `sum(price)` ของ `status = 'available'` |
+| กำไรขั้นต้นเดือนนี้ | `sum(price - cost)` ของไอดีที่ `status = 'SoldOut'` และ `updated_at` อยู่ในเดือน |
+| ต้นทุนคงค้าง (สต็อก) | `sum(cost)` ของไอดีที่ `status in ('Available','Installment')` |
+| มูลค่าสต็อกตามราคาขาย | `sum(price)` ของ `status = 'Available'` |
 | จำนวนไอดีตามสถานะ | `group by status` |
 | ยอดผ่อนคงค้าง | `sum(amount_due - amount_paid)` จาก `installment_payments` (ฟีเจอร์ A) |
 | กำไรเฉลี่ยต่อไอดี | กำไรขั้นต้น ÷ จำนวนที่ขาย |
@@ -292,7 +292,7 @@ create table public.installment_payments (
 
 **Acceptance criteria**
 
-- ตัวเลขบนการ์ดตรงกับ `select sum(price - cost) from accounts where status='sold'` (±0)
+- ตัวเลขบนการ์ดตรงกับ `select sum(price - cost) from accounts where status='SoldOut'` (±0)
 - staff เรียก endpoint ได้ 403
 - ไม่มี `cost` ถูกส่งไปยัง `AccountPublic` หรือ RSC props ของ staff (`src/app/admin/page.tsx:56` ยังคืน `[]`)
 - โหลด < 800 ms ที่ 5,000 ไอดี
@@ -365,9 +365,9 @@ create unique index uq_active_reservation
 |---|---|---|
 | F-1 | สร้างตาราง + partial unique index | migration |
 | F-2 | `POST /api/admin/reservations` (owner + PIN) | route ใหม่ |
-| F-3 | `POST /api/admin/reservations/[id]/convert` → เปลี่ยนเป็น `sold` และสร้าง `installment_plans` (ถ้าผ่อน) | route ใหม่ |
+| F-3 | `POST /api/admin/reservations/[id]/convert` → เปลี่ยนเป็น `SoldOut` และสร้าง `installment_plans` (ถ้าผ่อน) | route ใหม่ |
 | F-4 | แสดงป้าย "จองแล้ว ถึงวันที่ …" บนการ์ดหน้า `/store` (เฉพาะวัน ไม่แสดงชื่อลูกค้า) | `AccountCatalogClient.tsx:208-300` |
-| F-5 | Job หมดอายุอัตโนมัติ (ใช้ cron เดียวกับ E) → `status='expired'` + คืน `accounts.status='available'` | cron |
+| F-5 | Job หมดอายุอัตโนมัติ (ใช้ cron เดียวกับ E) → `status='Expired'` + คืน `accounts.status='Available'` | cron |
 | F-6 | บันทึก audit ทุกครั้งที่จอง/ยกเลิก | `logAudit()` |
 
 **Acceptance criteria**
@@ -439,9 +439,9 @@ create unique index uq_active_reservation
 | ลำดับ | งาน | ใช้เวลา | เหตุผล |
 |---|---|---|---|
 | 1 | เฟส 0 ข้อ 0-1 ถึง 0-3 (test script + error boundary) | 1 วัน | ทำให้ทุกงานหลังจากนี้ตรวจสอบได้ |
-| 2 | 1-1 (RLS + `admin_roles`) | 2–3 วัน | ช่องโหว่ที่อันตรายที่สุด และเป็นฐานของทุก guard |
+| 2 | 1-1 (ปิด RLS ที่หลวม — `admin_roles` มีอยู่แล้วใน production, `DB.md:68-71`) | 2–3 วัน | ช่องโหว่ที่อันตรายที่สุด และเป็นฐานของทุก guard |
 | 3 | 1-2 + 1-3 (deliveries + PIN token) | 2–3 วัน | ปิดช่องที่ใช้โจมตีได้ด้วย anon key |
 | 4 | 1-4 (หยุด plaintext ไป Sheets) | 1–2 วัน | ลดขอบเขตข้อมูลที่รั่วถ้ามีเหตุ |
-| 5 | 2-1 + 2-2 (migration 002 + enum) | 3–4 วัน | ปลดล็อกงานที่เหลือทั้งหมด |
+| 5 | 2-1 + 2-2 (migration 003+ + enum PascalCase) | 3–4 วัน | ปลดล็อกงานที่เหลือทั้งหมด |
 
 > หลังครบ 5 ข้อนี้ ระบบจะ "ปลอดภัยพอจะเพิ่มฟีเจอร์" — ก่อนหน้านั้นการเพิ่มฟีเจอร์ใหม่จะยิ่งเพิ่มพื้นที่โจมตีบนฐานที่ยังรั่ว

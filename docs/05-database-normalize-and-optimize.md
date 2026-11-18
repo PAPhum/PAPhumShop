@@ -1,28 +1,64 @@
 # ฐานข้อมูล — Schema Drift, Normalization และการ Optimize
 
-> **วิธีอ่านเอกสารนี้:** ทุกข้อสรุปมาจาก (1) `supabase/migrations/001_initial_schema.sql` 188 บรรทัด (2) ชื่อตาราง/คอลัมน์ที่โค้ดเรียกจริงใน `src/` (ตรวจด้วย grep `.from('...')` ได้ 55 จุด) และ (3) `src/types/database.ts` 83 บรรทัด
-> **ไม่ได้เชื่อมต่อ DB จริง** — จึงไม่ยืนยันว่า production ตรงกับ migration หรือตรงกับโค้ด สิ่งที่ทำได้คือชี้ให้เห็นว่า "สามแหล่งนี้ไม่ตรงกันตรงไหน" และให้ SQL ที่ปลอดภัยพอจะรันเพื่อปรับให้เป็นแบบเดียว
+> **วิธีอ่านเอกสารนี้:** ข้อสรุปมาจาก 4 แหล่ง
+> (1) **production dump `supabase/migrations/DB.md` 145 บรรทัด** — ผลรัน `information_schema.columns` + `information_schema.views` + `pg_policies` บน Supabase จริง (18 พ.ย. 2026)
+> (2) `supabase/migrations/001_initial_schema.sql` 188 บรรทัด
+> (3) ชื่อตาราง/คอลัมน์ที่โค้ดเรียกจริงใน `src/` (grep `.from('...')` ได้ 55 จุด)
+> (4) `src/types/database.ts` 83 บรรทัด
+>
+> **สรุปสั้นที่สุด: production ไม่ตรงกับไฟล์ migration แต่ค่อนข้างตรงกับโค้ด** — ไฟล์ `001_initial_schema.sql` เป็นเอกสารประวัติที่ล้าสมัย **ห้ามใช้สร้าง DB ใหม่** ให้ยึด `DB.md` เป็นความจริง
 
 ---
 
-## 1. สถานะปัจจุบัน: มีสามแหล่งความจริงที่ไม่ตรงกัน
+## 1. สถานะปัจจุบัน: 4 แหล่งความจริง
 
 ```mermaid
 flowchart LR
-  M["migration<br/>001_initial_schema.sql<br/>7 ตาราง"] -->|"ไม่ตรง"| C["โค้ดใน src/<br/>8 ชื่อตาราง"]
-  T["src/types/database.ts<br/>PascalCase status"] -->|"ไม่ตรง"| M
-  C -->|"ไม่ตรง"| T
-  M -.->|"ไม่มีใครรู้"| P[("Supabase production")]
-  C -.->|"ไม่รู้ว่าใช้ได้"| P
+  P[("Supabase production<br/>DB.md = ความจริง")]
+  M["migration 001<br/>ล้าสมัย ใช้เป็นประวัติเท่านั้น"] -->|"ไม่ตรง"| P
+  C["โค้ดใน src/<br/>8 ตาราง + 1 view"] -->|"ตรงเกือบทั้งหมด"| P
+  T["src/types/database.ts"] -->|"PascalCase status"| C
+  M -.->|"ห้ามใช้สร้างใหม่"| X["ถ้ารันซ้ำ<br/>แอปพัง"]
 ```
 
-| แหล่ง | ตารางที่ประกาศ | ใช้สร้างอะไร |
+| แหล่ง | ตาราง/วิวที่ประกาศ | สถานะ |
 |---|---|---|
-| `supabase/migrations/001_initial_schema.sql` | `accounts_public`, `accounts_secret`, `installment_settings`, `banner_categories`, `banners`, `deliveries`, `admin_security` | เอกสาร schema ที่ควรเป็นจริง |
-| โค้ด (`src/`) | `accounts_public`, `accounts`, `admin_roles`, `installment_settings`, `banner_categories`, `banners`, `deliveries`, `admin_security` | สิ่งที่แอปรันจริง |
-| `src/types/database.ts` | ไม่ประกาศตาราง เป็น TypeScript interface 5 ตัว | สัญญาระหว่างชั้นข้อมูลกับ UI |
+| **`supabase/migrations/DB.md`** | 8 ตาราง + **1 view** (`accounts`, `accounts_public` (view), `accounts_secret`, `admin_roles`, `admin_security`, `banner_categories`, `banners`, `deliveries`, `installment_settings`) | ✅ **production จริง — ใช้เป็นแหล่งความจริง** |
+| `supabase/migrations/001_initial_schema.sql` | 7 ตาราง (ไม่มี `accounts`, `admin_roles`; `accounts_public` เป็น TABLE) | ⚠️ ล้าสมัย ห้ามรันซ้ำ |
+| โค้ด (`src/`) | 8 ชื่อ: `accounts`, `accounts_public`, `admin_roles`, `admin_security`, `banner_categories`, `banners`, `deliveries`, `installment_settings` | ✅ ตรงกับ production |
+| `src/types/database.ts` | TypeScript interface 5 ตัว | ✅ ตรงกับ production (ยกเว้น `cost` ที่ไม่ถูกประกาศใน `AccountPublic`) |
 
-**ข้อสรุปสั้น:** migration ไม่มีตาราง `accounts` และ `admin_roles` แต่โค้ดเรียกสองตารางนี้รวม 13 จุด (grep แล้ว: `accounts` 10 จุด, `admin_roles` 3 จุด) → ถ้าใครสร้าง DB ใหม่จาก migration นี้ แอปจะพังทันทีในหน้าแรกที่ query
+### 1.1 ความจริงจาก production (อ้าง `DB.md`)
+
+| # | ข้อเท็จจริง | หลักฐาน |
+|---|---|---|
+| P-1 | `accounts` **เป็นตารางฐานจริง** และเก็บทั้งข้อมูลสาธารณะ + คอลัมน์ `*_enc` + `security_status` ไว้ในตารางเดียว | `DB.md:16-41` |
+| P-2 | `accounts_public` **เป็น VIEW** ไม่ใช่ตาราง: `select id, code, ... from accounts where status in ('Available','Installment','SoldOut')` | `DB.md:114-116` |
+| P-3 | view ใช้สิทธิ์เจ้าของ view (ไม่ได้ตั้ง `security_invoker`) → anon อ่าน view ได้แม้ไม่มีสิทธิ์บนตารางฐาน | `DB.md:116` + ไม่มี policy anon บน `accounts` (`DB.md:129`) |
+| P-4 | `accounts.status` เป็น `text` default `'Unavailable'` (PascalCase) — **ไม่ใช่ CHECK ตัวพิมพ์เล็กตาม migration** | `DB.md:18` |
+| P-5 | `accounts.price`, `cost`, `min_down_*` เป็น **`numeric`** (migration เป็น `integer`) | `DB.md:19-22` |
+| P-6 | `admin_roles` มีจริง: `user_id, username, role, created_at` | `DB.md:68-71` |
+| P-7 | `accounts_secret` มีอยู่ครบ แต่ **ไม่มีโค้ดใดเรียก** (`grep accounts_secret src/` = 0) | `DB.md:56-67` |
+| P-8 | `banner_categories` มี `description`, `logo_url`, **`icon_url`**, `hide_preview` — `icon_url` ไม่ถูกใช้ในโค้ด | `DB.md:81-84` |
+| P-9 | `banners` มี `is_pinned`, `pin_order`, `category_ids uuid[]` ครบ | `DB.md:91-93` |
+| P-10 | `banner_categories` และ `banners` **ไม่มี** `updated_at` | `DB.md:76-93` |
+| P-11 | `admin_security` ยังไม่มี `pin_version` / `failed_attempts` / `locked_until` | `DB.md:72-75` |
+| P-12 | `deliveries` ยังไม่มี `download_count` / `last_download_ip` / `revoked_at` | `DB.md:94-100` |
+
+### 1.2 RLS ที่มีจริงใน production
+
+| ตาราง | policy ที่คุมอยู่จริง | ผล |
+|---|---|---|
+| `accounts` | `Owners manage accounts` → `EXISTS (select 1 from admin_roles where user_id = auth.uid() and role = 'owner')` | ✅ **owner เท่านั้น** (staff อ่านตารางฐานไม่ได้) |
+| `accounts_secret` | `Admin full access` → `true` สำหรับ `authenticated` | ❌ ผู้ใช้ Auth คนใดก็ได้อ่าน (ตารางนี้ไม่มีโค้ดใช้ แต่ยังมี ciphertext + `cost` ของเดิม) |
+| `admin_roles` | `Users can read own role` → `auth.uid() = user_id` | ✅ อ่านได้เฉพาะ role ของตัวเอง |
+| `admin_security` | 2 policy ซ้ำ `auth.uid() = user_id` | ⚠️ เจ้าของแก้ `pin_hash` เองได้ |
+| `deliveries` | `Public read active deliveries` (`anon, authenticated`, `expires_at > now()`) + `true` สำหรับ authenticated | ❌ anon enumerate token ได้ |
+| `installment_settings` | `Public read` + `Admin ...` `true` | ⚠️ authenticated ทุกคนแก้เรทได้ |
+| `banners` | `Public read` (`is_public`) + `true` สำหรับ authenticated | ⚠️ authenticated ทุกคนแก้/ลบได้ |
+| `banner_categories` | `Public read` + `true` สำหรับ authenticated | ⚠️ authenticated ทุกคนแก้/ลบได้ |
+
+**ข้อควรระวังที่สำคัญที่สุดสำหรับ agent:** production มี **policy ซ้ำ** หลายชุด (เช่น `deliveries` มี 4 policy, `installment_settings` 4, `banners` 4, `banner_categories` 4, `admin_security` 2) เพราะเคยรัน SQL ใหม่ทับของเก่า → เวลาจะปิดช่องโหว่ต้อง `drop policy` **ให้ครบทุกชื่อ** ไม่ใช่แค่ชื่อที่ migration ระบุ ไม่งั้น policy `true` ที่เหลือจะยังเปิดอยู่
 
 ---
 
@@ -30,13 +66,13 @@ flowchart LR
 
 ### 2.1 ระดับตาราง
 
-| # | ตาราง | ใน migration | ในโค้ด | ผลเมื่อสร้าง DB จาก migration |
-|---|---|---|---|---|
-| T-1 | `accounts` | ❌ ไม่มี | ✅ ใช้ 10 จุด | `/id/[code]` (`src/app/id/[code]/page.tsx:24`), `/admin` (`src/app/admin/page.tsx:67`), API ทั้ง 4 method (`accounts/route.ts:159,241`; `[id]/route.ts:172,224,312,379,385`) ตอบ 404/500 |
-| T-2 | `admin_roles` | ❌ ไม่มี | ✅ ใช้ 3 จุด (`src/app/admin/page.tsx:26`; `accounts/route.ts:24`; `[id]/route.ts:20`) | `roleRow = null` → ทุกคนถูกมองเป็น `staff` (`admin/page.tsx:31`) และ `requireOwner()` คืน false ตลอด → **owner คนแรกเข้าระบบไม่ได้เลย** |
-| T-3 | `accounts_public` | ✅ TABLE (`001:5`) | ✅ ใช้ 3 จุด (`src/app/store/page.tsx:12`; `accounts/route.ts:110`) | ทำงานได้ แต่ถูกมองข้ามว่าเป็น "view" ในเอกสารรุ่นก่อน |
-| T-4 | `accounts_secret` | ✅ TABLE (`001:23`) | ❌ **ไม่มีผู้เรียกเลย** | ตารางว่างถาวร; การแยก secret ที่ออกแบบไว้ไม่มีผล |
-| T-5 | `banner_category_links` | ❌ ไม่มี | ❌ ไม่มี (ใช้ array แทน) | ไม่มี junction table → ต้องพึ่ง `category_ids` |
+| # | ตาราง/วิว | ใน migration 001 | ใน production (`DB.md`) | ในโค้ด | ผลถ้าใช้ migration สร้าง DB ใหม่ |
+|---|---|---|---|---|---|
+| T-1 | `accounts` | ❌ ไม่มี | ✅ TABLE (`:16-41`) | ✅ 10 จุด | `/id/[code]` (`src/app/id/[code]/page.tsx:24`), `/admin` (`src/app/admin/page.tsx:67`), API ทั้ง 4 method (`accounts/route.ts:159,241`; `[id]/route.ts:172,224,312,379,385`) ตอบ 404/500 |
+| T-2 | `admin_roles` | ❌ ไม่มี | ✅ TABLE (`:68-71`) | ✅ 3 จุด (`src/app/admin/page.tsx:26`; `accounts/route.ts:24`; `[id]/route.ts:20`) | `roleRow = null` → ทุกคนถูกมองเป็น `staff` (`admin/page.tsx:31`) และ `requireOwner()` คืน false ตลอด → **owner คนแรกเข้าระบบไม่ได้เลย** |
+| T-3 | `accounts_public` | ✅ **TABLE** (`:5`) | ✅ **VIEW** (`:114-116`) | ✅ 3 จุด (`src/app/store/page.tsx:12`; `accounts/route.ts:110`) | ถ้าสร้างตาม migration จะได้ตารางว่าง ไม่ใช่ view ที่สะท้อน `accounts` → `/store` ว่าง |
+| T-4 | `accounts_secret` | ✅ TABLE (`:23`) | ✅ TABLE (`:56-67`) | ❌ **ไม่มีผู้เรียกเลย** | มีตารางแต่ไม่มีข้อมูล/ไม่มีโค้ดอ่าน |
+| T-5 | `banner_category_links` | ❌ ไม่มี | ❌ ไม่มี | ❌ ไม่มี (ใช้ array แทน) | ไม่มี junction table → ต้องพึ่ง `category_ids` |
 
 ### 2.2 ระดับคอลัมน์ — ตาราง `accounts` ที่โค้ดต้องการ
 
@@ -71,25 +107,33 @@ flowchart LR
 | `security_status` (jsonb) | — | ✅ `:33-38` | **โค้ดไม่ใช้เลย** → dead column |
 
 **สรุปตัวเลข:** คอลัมน์ที่โค้ดใช้แต่ไม่มีชื่อตรงใน migration = **11 คอลัมน์** และมี **1 คอลัมน์** ใน migration ที่โค้ดไม่ใช้ (`security_status`)
+**เทียบกับ production:** ครบทุกคอลัมน์ที่โค้ดใช้ (`DB.md:16-41`) — ชื่อ `*_enc`, `private_notes_enc`, `gmail_authenticator_enc`, `gmail_recovery_enc` มีจริงทั้งหมด และ `security_status` มีอยู่ใน `accounts` (`DB.md:39`) ไม่ใช่ `accounts_secret`
 
 ### 2.3 ระดับค่า enum — `status`
 
 | แหล่ง | ค่าที่อนุญาต | หลักฐาน |
 |---|---|---|
 | TypeScript | `'Unavailable' \| 'Available' \| 'Installment' \| 'SoldOut'` | `src/types/database.ts:1` |
-| CHECK constraint | `'available' \| 'installment' \| 'sold'` | `001:8` |
-| RLS anon | `status = 'available'` | `001:117-120` |
+| **Production default** | `'Unavailable'` (text, NOT NULL) | `DB.md:18` |
+| CHECK constraint (เฉพาะในไฟล์ migration) | `'available' \| 'installment' \| 'sold'` | `001:8` |
+| RLS anon (เฉพาะในไฟล์ migration) | `status = 'available'` | `001:117-120` |
+| View `accounts_public` (production) | `status in ('Available','Installment','SoldOut')` | `DB.md:116` |
 | โค้ดกรองหน้าเว็บ | `['Available','Installment','SoldOut']` | `src/app/store/page.tsx:14` |
-| โค้ด validate ฝั่ง API | 4 ค่า PascalCase | `accounts/route.ts:12-17` (ค่าคงที่ `VALID_STATUSES`) |
+| โค้ด validate ฝั่ง API | 4 ค่า PascalCase | `accounts/route.ts:12-17` (`VALID_STATUSES`) |
 | ค่า default ตอนสร้าง | `'Unavailable'` | `accounts/route.ts:186-188` |
 
-**ผลลัพธ์ที่เป็นไปได้ 3 กรณี:**
+**ข้อสรุปจาก production:** ค่าที่ใช้จริงคือ **PascalCase** และ view กรองด้วย PascalCase (`DB.md:116`) — ไฟล์ `001` ที่เขียนตัวพิมพ์เล็กเป็นเอกสารล้าสมัย
+`DB.md` ไม่ได้ query CHECK constraint จึงยังไม่ยืนยันว่า production มี CHECK อะไรอยู่ ถ้าจะเพิ่ม ให้ใช้ค่า PascalCase เท่านั้น:
 
-1. DB จริงยึด CHECK → การ INSERT ทุกครั้งล้มเหลว (PascalCase ไม่ผ่าน CHECK) และ RLS anon ไม่คืนแถวใดเลย → `/store` ว่าง
-2. DB จริงยึด PascalCase (แก้ CHECK ไปแล้ว) → ทำงานได้ แต่ migration ใน repository เป็นเท็จ
-3. DB จริงยึดตัวพิมพ์เล็กและแอปไม่เคย INSERT สำเร็จ → ไม่มีข้อมูลใหม่
+```sql
+alter table public.accounts
+  drop constraint if exists accounts_status_check;
+alter table public.accounts
+  add constraint accounts_status_check
+  check (status in ('Unavailable','Available','Installment','SoldOut'));
+```
 
-ไม่ว่ากรณีใด **ต้องเลือกค่าเดียวและทำให้ครบทั้ง 4 ชั้น** (type, CHECK, RLS, UI) แนวทางที่แนะนำอยู่ในข้อ 5.1
+> **ผลกระทบถ้าเผลอแก้เป็นตัวพิมพ์เล็ก:** view `accounts_public` จะคืน 0 แถวทันที (`/store` ว่าง) และ `VALID_STATUSES` ฝั่ง API จะปฏิเสธทุกค่า
 
 ### 2.4 ระดับคอลัมน์ — ตาราง `banners` และ `banner_categories`
 
@@ -122,7 +166,9 @@ flowchart LR
 
 > ใช้เกณฑ์ 1NF/2NF/3NF แบบเข้าใจง่าย: **1NF** = ทุกช่องเก็บค่าเดี่ยวและ atomic, **2NF** = ไม่มีแอตทริบิวต์ที่ไม่ใช่คีย์ขึ้นกับเพียงส่วนหนึ่งของคีย์ผสม, **3NF** = ไม่มีแอตทริบิวต์ที่ไม่ใช่คีย์ขึ้นกับแอตทริบิวต์ที่ไม่ใช่คีย์อื่น
 
-### 3.1 ภาพ ER ปัจจุบัน (ตาม migration)
+### 3.1 ภาพ ER ตามไฟล์ migration (เอกสารประวัติ — ของจริงดู §1.1)
+
+> ไดอะแกรมนี้สะท้อน **ไฟล์ `001_initial_schema.sql` เท่านั้น** ไม่ใช่ production — production มี `accounts` เป็นตารางฐานและ `accounts_public` เป็น view (`DB.md:16-41`, `:114-116`) ความสัมพันธ์เชิงตรรกะ (1 account → 1 secret, 1 banner → N deliveries) ยังเหมือนกัน
 
 ```mermaid
 erDiagram
@@ -326,8 +372,8 @@ erDiagram
 
 | การเปลี่ยน | แก้อะไร | ต้องแก้โค้ดกี่จุด |
 |---|---|---|
-| รวม `accounts_public` + `accounts_secret` → `accounts` + `account_secrets` | โค้ดเรียก `accounts` อยู่แล้ว 10 จุด; ลด drift | เปลี่ยน `store/page.tsx:12` และ `accounts/route.ts:110` ให้ชี้ `accounts` + view |
-| `account_secrets` มีคอลัมน์ `*_enc` ตรงกับโค้ด | ลบคอลัมน์ drift 11 ตัว | 0 (โค้ดตรงอยู่แล้ว) |
+| `accounts` เดียว + view `accounts_public` (แบบ production) | production ทำแบบนี้อยู่แล้วและโค้ดตรงทั้งหมด — ไม่ต้องย้ายข้อมูล | 0 |
+| ถ้าจะแยก `account_secrets` จริง | ลดจำนวนคนที่เข้าถึง ciphertext (แต่ต้องย้ายข้อมูล + แก้โค้ด 11 จุด) | ~11 จุด + migration |
 | แยก `purchase_date`/`phone_owner` เป็นคอลัมน์ | 1NF, query ได้, ไม่ต้อง regex | `accounts/route.ts:196-200`, `[id]/route.ts:57-77,112-137` |
 | `banner_category_links` แทน `category_ids` + `is_pinned` | 1NF/2NF, FK จริง, pin ต่อหมวดถูกต้อง | ~8 จุดใน `banners/*` และ `banners/page.tsx` |
 | `account_status` enum | ล็อกโดเมนค่าเดียว | 4 ไฟล์ (`types`, `store/page`, `accounts/route`, `[id]/route`) |
@@ -341,59 +387,91 @@ erDiagram
 > ทุกคำสั่งใช้ `IF NOT EXISTS` / `IF EXISTS` และ **ไม่ลบข้อมูลเดิม** เพื่อให้รันบน production ได้อย่างปลอดภัย
 > ลำดับที่ปลอดภัย: **5.1 (enum) → 5.2 (ตารางที่ขาด) → 5.3 (คอลัมน์ที่ขาด) → 5.4 (backfill) → 5.5 (index) → 5.6 (trigger) → 5.7 (RLS) → 5.8 (drop ของเก่า)**
 
-### 5.1 โดเมนสถานะเดียว (เลือกตัวพิมพ์เล็กเป็นแหล่งความจริง)
+### 5.1 โดเมนสถานะเดียว (ยึด **PascalCase** ตาม production)
+
+> **ห้ามแปลงเป็นตัวพิมพ์เล็ก** — view `accounts_public` กรองด้วย `'Available','Installment','SoldOut'` (`DB.md:116`) และ `VALID_STATUSES` ฝั่ง API ใช้ PascalCase (`accounts/route.ts:12-17`) การเปลี่ยนเป็น lowercase จะทำให้ `/store` ว่างทันที
 
 ```sql
--- เลือกตัวพิมพ์เล็กเพราะ RLS ใน 001:120 เขียนไว้แล้วว่า status = 'available'
+-- ขั้นที่ 1: สร้าง enum ที่มีค่าเท่าข้อมูลจริง
 do $$
 begin
   if not exists (select 1 from pg_type where typname = 'account_status') then
-    create type public.account_status as enum ('available','installment','sold','unavailable');
+    create type public.account_status as enum
+      ('Unavailable','Available','Installment','SoldOut');
   end if;
 end $$;
 
--- ตรวจค่าที่มีอยู่ในปัจจุบันก่อนแปลง (ต้องได้ 0 แถว ถ้าไม่ใช่ ให้แก้ข้อมูลก่อน)
--- select distinct status from public.accounts;
+-- ขั้นที่ 2: ตรวจค่าที่มีจริง (ต้องได้เฉพาะ 4 ค่านี้)
+select status, count(*) from public.accounts group by 1;
 
--- alter table public.accounts
---   alter column status type public.account_status
---   using (lower(status))::public.account_status;
+-- ขั้นที่ 3: view ผูกกับคอลัมน์นี้ ต้อง drop ก่อน alter แล้วสร้างคืน
+drop view if exists public.accounts_public;
+
+alter table public.accounts
+  alter column status type public.account_status
+  using (status::public.account_status);
+
+-- ขั้นที่ 4: สร้าง view คืนให้เหมือนเดิมเป๊ะ (รายการคอลัมน์ตาม DB.md:116)
+create view public.accounts_public as
+select
+  id, code, status, price, min_down_weekly, min_down_monthly,
+  interest_free_weeks, interest_free_months, tags, description,
+  main_image_url, gallery_urls, created_at, updated_at
+from public.accounts
+where status in ('Available','Installment','SoldOut');
 ```
 
-ลำดับการแปลงค่าที่ต้องทำในโค้ดให้ตรงกัน:
+> **ห้ามใส่ `with (security_invoker = true)`** ใน view นี้ ถ้าไม่มี policy ให้ `anon` อ่าน `accounts` (ปัจจุบันไม่มี — `DB.md:129` มีเฉพาะ owner) หน้า `/store` จะว่างทันที
 
-| ค่าเดิม (PascalCase) | ค่าใหม่ |
-|---|---|
-| `Available` | `available` |
-| `Installment` | `installment` |
-| `SoldOut` | `sold` |
-| `Unavailable` | `unavailable` |
+จุดที่ต้องแก้ในโค้ดให้ตรงกัน (ทำเฉพาะเมื่อจะย้ายไป enum จริง):
 
-จุดที่ต้องแก้: `src/types/database.ts:1`, `src/app/store/page.tsx:14`, `src/components/AccountCatalogClient.tsx:26,30,34,58,60,258`, `src/app/api/admin/accounts/route.ts:12-17`, `src/app/api/admin/accounts/[id]/route.ts:12-17` (ถ้ามีค่าคงที่เดียวกัน), RLS `001:120`
+`src/types/database.ts:1`, `src/app/store/page.tsx:14`, `src/components/AccountCatalogClient.tsx:26,30,34,58,60,258`, `src/app/api/admin/accounts/route.ts:12-17`, `src/app/api/admin/accounts/[id]/route.ts` (ค่าคงที่ชุดเดียวกัน)
+
+> ถ้ายังไม่ต้องการ enum: **ไม่ต้องทำอะไรเลย** — production ทำงานด้วย `text` + PascalCase อยู่แล้ว และเป็นทางเลือกที่ปลอดภัยกว่าในรอบนี้
 
 ### 5.2 ตารางที่ขาด
 
+> **อ่านก่อนรัน:** `accounts` และ `admin_roles` **มีอยู่จริงใน production แล้ว** (`DB.md:16-41`, `:68-71`) — SQL ด้านล่างใช้ `create table if not exists` จึงเป็น no-op บน production
+> **ห้าม `drop table` แล้วสร้างใหม่** เพราะจะทำให้ข้อมูลไอดี/สิทธิ์หายทั้งหมด
+> ข้อ 1 และ 3 = ตารางที่มีอยู่แล้ว (ใช้เป็นเอกสารอ้างอิงสำหรับ DB ใหม่) · ข้อ 2 = ตารางทางเลือกที่ยังไม่มี · ข้อ 4–6 = ตารางใหม่สำหรับฟีเจอร์ใน `docs/06`
+
 ```sql
--- 1) accounts: ตารางฐานที่โค้ดใช้จริง
+-- 1) accounts: ตารางฐาน (สะท้อน DB.md:16-41)
 create table if not exists public.accounts (
   id uuid primary key default gen_random_uuid(),
   code text not null unique,
-  status text not null default 'unavailable',
-  price integer not null default 0 check (price >= 0),
-  cost integer not null default 0 check (cost >= 0),
-  min_down_weekly integer not null default 1000 check (min_down_weekly >= 0),
-  min_down_monthly integer not null default 2000 check (min_down_monthly >= 0),
+  status text not null default 'Unavailable',
+  price numeric not null default 0 check (price >= 0),
+  cost numeric not null default 0 check (cost >= 0),
+  min_down_weekly numeric not null default 0 check (min_down_weekly >= 0),
+  min_down_monthly numeric not null default 0 check (min_down_monthly >= 0),
   interest_free_weeks integer not null default 2 check (interest_free_weeks >= 0),
   interest_free_months integer not null default 1 check (interest_free_months >= 0),
   tags text[] not null default '{}',
   description text,
   main_image_url text,
   gallery_urls text[] not null default '{}',
+  game_uid_enc text,
+  login_provider_enc text,
+  username_enc text,
+  password_enc text,
+  authenticator_enc text,
+  gmail_enc text,
+  gmail_password_enc text,
+  gmail_authenticator_enc text,
+  gmail_recovery_enc text,
+  private_notes_enc text,
+  security_status jsonb,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
 
--- 2) account_secrets: 1:1 กับ accounts, ชื่อคอลัมน์ตรงกับโค้ดทุกตัว
+-- ถ้าตารางมีอยู่แล้วแต่ยังขาดคอลัมน์ (กรณี production เก่ากว่าโค้ด) ให้ใช้ ADD COLUMN
+-- alter table public.accounts add column if not exists gmail_recovery_enc text;
+
+-- 2) account_secrets: ยังไม่มีใน production — สร้างเฉพาะเมื่อจะแยก secret ออกจาก accounts
+--    (ต้อง migrate ข้อมูล + แก้โค้ด 11 จุดก่อน จึงจะคุ้ม)
+
 create table if not exists public.account_secrets (
   account_id uuid primary key references public.accounts(id) on delete cascade,
   game_uid_enc text,
@@ -411,7 +489,7 @@ create table if not exists public.account_secrets (
   updated_at timestamptz not null default now()
 );
 
--- 3) admin_roles: จำเป็นต่อ requireOwner() ทั้ง 3 จุด
+-- 3) admin_roles: มีอยู่แล้วใน production (DB.md:68-71) — จำเป็นต่อ requireOwner() ทั้ง 3 จุด
 create table if not exists public.admin_roles (
   user_id uuid primary key references auth.users(id) on delete cascade,
   username text not null unique,
@@ -454,37 +532,43 @@ create table if not exists public.admin_pin_attempts (
 
 ### 5.3 คอลัมน์ที่ขาดบนตารางเดิม
 
+> **สถานะเทียบ production:** `banners.category_ids`, `is_pinned`, `pin_order` มีแล้ว (`DB.md:91-93`); `banner_categories.description`, `logo_url`, `hide_preview` มีแล้ว (`DB.md:81-84`) — SQL ต่อไปนี้จะไม่ทำอะไรกับคอลัมน์ที่มีอยู่
+> คอลัมน์ที่ยัง **ไม่มีจริง** และเป็นงานใหม่: `banners.updated_at`, `banner_categories.updated_at`, `admin_security.pin_version/failed_attempts/locked_until`, `deliveries.download_count/last_download_ip`
+
 ```sql
--- banners: 5 คอลัมน์ที่โค้ดใช้แต่ migration ไม่มี
+-- banners: คอลัมน์ที่โค้ดใช้ (มีแล้วใน production) + updated_at (ยังไม่มี)
 alter table public.banners
   add column if not exists category_ids uuid[] not null default '{}',
   add column if not exists is_pinned boolean not null default false,
   add column if not exists pin_order integer not null default 0,
   add column if not exists updated_at timestamptz not null default now();
 
--- banner_categories: 4 คอลัมน์
+-- banner_categories: 3 คอลัมน์มีแล้ว + updated_at (ยังไม่มี)
 alter table public.banner_categories
   add column if not exists description text,
   add column if not exists logo_url text,
   add column if not exists hide_preview boolean not null default false,
   add column if not exists updated_at timestamptz not null default now();
 
--- admin_security: รองรับ HMAC token + lockout
+-- admin_security: รองรับ HMAC token + lockout (ยังไม่มีใน production)
 alter table public.admin_security
   add column if not exists pin_version integer not null default 0,
   add column if not exists failed_attempts integer not null default 0,
   add column if not exists locked_until timestamptz;
 
--- deliveries: นับดาวน์โหลด + ตรวจ rate limit
+-- deliveries: นับดาวน์โหลด + ตรวจ rate limit (ยังไม่มีใน production)
 alter table public.deliveries
   add column if not exists download_count integer not null default 0,
   add column if not exists last_download_ip text;
 
--- accounts: ให้ main_image_url ว่างได้ตามที่โค้ดส่ง (route.ts:215)
+-- accounts: production อนุญาต null อยู่แล้ว (DB.md:27) — คำสั่งนี้กัน error บน DB ใหม่
 alter table public.accounts alter column main_image_url drop not null;
 ```
 
 ### 5.4 Backfill ข้อมูลเดิม
+
+> **⚠️ ห้ามรัน section นี้บน production** — production มีข้อมูลอยู่ใน `accounts` แล้ว (`DB.md:16-41`) การรัน `insert ... select from accounts_public` จะพยายามคัดลอก view กลับเข้าตารางต้นทาง (ข้อมูลซ้ำ/ทับ)
+> ใช้เฉพาะเมื่อย้ายจาก DB เก่าที่มีเฉพาะ `accounts_public` + `accounts_secret` ตาม migration 001 เท่านั้น
 
 ```sql
 -- ย้าย accounts_public → accounts (ถ้ายังมีข้อมูลอยู่)
@@ -642,17 +726,37 @@ begin
 end $$;
 ```
 
-### 5.7 RLS สำหรับตารางใหม่
+### 5.7 RLS ที่ควรเป็น (แก้ของเดิม ไม่ใช่สร้างซ้ำ)
+
+> **production มี policy อยู่แล้วและมีชื่อซ้ำหลายชุด** (`DB.md:123-145`) — ต้อง `drop policy` **ทุกชื่อเดิม** ก่อนสร้างชุดใหม่ ไม่งั้น policy `true` ที่เหลือจะยังเปิดช่องอยู่
+> **ห้ามเพิ่ม policy ให้ `anon` อ่านตาราง `accounts`** — หน้า `/store` อ่านผ่าน view `accounts_public` ซึ่งใช้สิทธิ์เจ้าของ view อยู่แล้ว (ถ้าเพิ่มจะเปิดเผยคอลัมน์ `*_enc` ให้ anon)
+> **ห้ามให้ `staff` อ่านตาราง `accounts`** เพราะตารางนี้มี ciphertext ของ secret อยู่ inline — ให้ staff อ่านผ่าน view เท่านั้น
 
 ```sql
-alter table public.accounts           enable row level security;
-alter table public.account_secrets    enable row level security;
-alter table public.admin_roles        enable row level security;
-alter table public.banner_category_links enable row level security;
-alter table public.admin_audit_log    enable row level security;
-alter table public.admin_pin_attempts enable row level security;
+-- 0) ล้าง policy เดิมทุกชื่อ (ชื่ออ้างจาก DB.md:123-145) ก่อนวางชุดใหม่
+drop policy if exists "Admin full access on accounts_secret"      on public.accounts_secret;
+drop policy if exists "Owners manage accounts"                    on public.accounts;
+drop policy if exists "Users can read own role"                   on public.admin_roles;
+drop policy if exists "Admin manage own pin"                      on public.admin_security;
+drop policy if exists "Admin can manage own PIN"                  on public.admin_security;
+drop policy if exists "Authenticated manage deliveries"           on public.deliveries;
+drop policy if exists "Public read active deliveries"             on public.deliveries;
+drop policy if exists "Admin full access on deliveries"           on public.deliveries;
+drop policy if exists "Public can read active deliveries"         on public.deliveries;
+drop policy if exists "Owners update installment settings"        on public.installment_settings;
+drop policy if exists "Public read installment settings"          on public.installment_settings;
+drop policy if exists "Admin can update installment settings"     on public.installment_settings;
+drop policy if exists "Public can read installment settings"      on public.installment_settings;
+drop policy if exists "Authenticated manage banners"              on public.banners;
+drop policy if exists "Public read public banners"                on public.banners;
+drop policy if exists "Admin full access on banners"              on public.banners;
+drop policy if exists "Public can read public banners"            on public.banners;
+drop policy if exists "Authenticated manage banner categories"    on public.banner_categories;
+drop policy if exists "Public read banner categories"             on public.banner_categories;
+drop policy if exists "Admin full access on banner categories"    on public.banner_categories;
+drop policy if exists "Public can read banner categories"         on public.banner_categories;
 
--- ฟังก์ชันช่วย (security definer เพื่อไม่ให้ recurse RLS)
+-- 1) ฟังก์ชันช่วย (security definer เพื่อไม่ให้ recurse RLS)
 create or replace function public.is_admin()
 returns boolean language sql stable security definer set search_path = public as $$
   select exists (select 1 from public.admin_roles where user_id = auth.uid());
@@ -663,24 +767,49 @@ returns boolean language sql stable security definer set search_path = public as
   select exists (select 1 from public.admin_roles where user_id = auth.uid() and role = 'owner');
 $$;
 
--- accounts: anon อ่านเฉพาะที่ขายได้
-create policy "anon read sellable accounts" on public.accounts
-  for select to anon using (status in ('available','installment','sold'));
-
-create policy "admin read accounts" on public.accounts
-  for select to authenticated using (public.is_admin());
-create policy "owner write accounts" on public.accounts
+-- 2) accounts: owner เท่านั้น (anon ใช้ view, staff ไม่ควรเห็น ciphertext)
+create policy "owner manage accounts" on public.accounts
   for all to authenticated using (public.is_owner()) with check (public.is_owner());
 
--- account_secrets: owner เท่านั้น ทุกกรณี
-create policy "owner manage secrets" on public.account_secrets
+-- 3) accounts_secret (ตารางเก่า): owner เท่านั้น
+create policy "owner manage account secrets" on public.accounts_secret
   for all to authenticated using (public.is_owner()) with check (public.is_owner());
 
--- admin_roles: อ่านของตัวเองได้ เขียนเฉพาะ owner
+-- 4) admin_roles: อ่านของตัวเองได้ เขียนเฉพาะ owner
 create policy "self read role" on public.admin_roles
   for select to authenticated using (user_id = auth.uid() or public.is_owner());
 create policy "owner manage roles" on public.admin_roles
+  for insert to authenticated with check (public.is_owner());
+create policy "owner update roles" on public.admin_roles
+  for update to authenticated using (public.is_owner()) with check (public.is_owner());
+create policy "owner delete roles" on public.admin_roles
+  for delete to authenticated using (public.is_owner());
+
+-- 5) deliveries: anon อ่านไม่ได้ — เข้าถึงผ่าน route handler ด้วย service role เท่านั้น
+create policy "owner manage deliveries" on public.deliveries
   for all to authenticated using (public.is_owner()) with check (public.is_owner());
+
+-- 6) banners / banner_categories / installment_settings: owner เขียน, ทุกคนอ่านได้ตามเงื่อนไข
+create policy "public read banners" on public.banners
+  for select to anon, authenticated using (is_public = true);
+create policy "owner manage banners" on public.banners
+  for all to authenticated using (public.is_owner()) with check (public.is_owner());
+
+create policy "public read categories" on public.banner_categories
+  for select to anon, authenticated using (true);
+create policy "owner manage categories" on public.banner_categories
+  for all to authenticated using (public.is_owner()) with check (public.is_owner());
+
+create policy "public read settings" on public.installment_settings
+  for select to anon, authenticated using (true);
+create policy "owner manage settings" on public.installment_settings
+  for all to authenticated using (public.is_owner()) with check (public.is_owner());
+
+-- 7) เปิด RLS ให้ตารางที่สร้างใหม่ (ตารางเดิมเปิดอยู่แล้วใน production)
+alter table public.banner_category_links enable row level security;
+alter table public.admin_audit_log      enable row level security;
+alter table public.admin_pin_attempts   enable row level security;
+alter table public.account_secrets      enable row level security;
 
 -- junction: อ่านสาธารณะ เขียน owner
 create policy "public read links" on public.banner_category_links
@@ -695,25 +824,28 @@ create policy "owner read audit" on public.admin_audit_log
 
 > ทุกครั้งที่แก้ RLS ให้ทดสอบด้วย `set role anon;` และ `set role authenticated;` ใน SQL editor เพื่อยืนยันผลจริง ไม่ใช่ดูจาก UI
 
-### 5.8 ลบของที่ไม่ได้ใช้ (ทำหลังยืนยันว่าไม่มีข้อมูลเหลือ)
+### 5.8 ลบของที่ไม่ได้ใช้ (ทำเฉพาะเมื่อยืนยันแล้ว)
+
+> **ห้ามรันบน production โดยไม่ตรวจก่อน** — `accounts_public` เป็น **view ที่ `/store` ใช้อยู่** (`DB.md:114-116`) ถ้า drop หน้าเว็บพังทันที และ `accounts_secret` อาจยังมีข้อมูลเก่าที่ไม่มีใน `accounts`
 
 ```sql
--- ตรวจก่อน
--- select count(*) from public.accounts_secret;
--- select count(*) from public.accounts_public;
+-- ตรวจก่อนทุกครั้ง
+select count(*) from public.accounts_secret;
+select count(*) from public.accounts;
 
--- drop index ที่ซ้ำกับ UNIQUE
+-- drop index ที่ซ้ำกับ UNIQUE (ตรวจว่ามีจริงก่อน)
 drop index if exists public.idx_deliveries_token;
 drop index if exists public.idx_banners_category_public_created;
 
--- drop ตารางเก่า (เมื่อ backfill เสร็จและผ่านการตรวจแล้วเท่านั้น)
--- drop table if exists public.accounts_secret;
--- drop table if exists public.accounts_public;
+-- ❌ ห้าม drop view accounts_public — เป็นของที่หน้า /store ใช้
+-- drop view if exists public.accounts_public;
 
--- drop คอลัมน์ที่เลิกใช้
--- alter table public.banners drop column if exists category_id;
+-- drop ตารางเก่า (เมื่อยืนยันว่า accounts_secret ว่าง หรือโอนข้อมูลครบแล้ว)
+-- drop table if exists public.accounts_secret;
+
+-- drop คอลัมน์ที่เลิกใช้ (หลังย้ายไป junction table และแก้โค้ดครบแล้วเท่านั้น)
 -- alter table public.banners drop column if exists category_ids;
--- alter table public.accounts_secret drop column if exists security_status;
+-- alter table public.banners drop column if exists category_id;
 ```
 
 ---
@@ -809,21 +941,23 @@ order by c.hide_preview asc, c.sort_order asc;
 ### 6.4 Query rewrite: `/store`
 
 ```ts
-// src/app/store/page.tsx — แทน select('*') ที่ไม่มี limit
+// src/app/store/page.tsx — อ่านผ่าน view accounts_public (production) + ใส่ pagination
 const PAGE_SIZE = 24;
 
 const { data, error, count } = await supabase
-  .from('accounts')
+  .from('accounts_public')   // view กรอง Available/Installment/SoldOut ให้แล้ว (DB.md:116)
   .select(
     'id, code, status, price, min_down_weekly, min_down_monthly, tags, description, main_image_url, gallery_urls, created_at',
     { count: 'exact' }
   )
-  .in('status', ['available', 'installment', 'sold'])
+  .in('status', ['Available', 'Installment', 'SoldOut'])   // PascalCase เท่านั้น — กันพลาดถ้า view ถูกแก้
   .order('created_at', { ascending: false })
   .range(page * PAGE_SIZE, page * PAGE_SIZE + PAGE_SIZE - 1);
 
 if (error) throw error;   // ปัจจุบันกลืน error ที่ :17
 ```
+
+> **ห้ามเปลี่ยนไป query `accounts` ตรง ๆ จาก anon** — policy ของ `accounts` เป็น owner-only (`DB.md:129`) ถ้าเปลี่ยนจาก view หน้า `/store` จะว่างทันที
 
 ### 6.5 Caching ที่ควรใช้ (Next 16 Cache Components)
 
@@ -866,23 +1000,23 @@ revalidateTag('banners');
 
 | ลำดับ | งาน | เกณฑ์ผ่าน |
 |---|---|---|
-| 1 | รัน `002_align_schema.sql` (ข้อ 5.1–5.4) | `select count(*) from public.accounts` = จำนวนไอดีเดิม |
-| 2 | แก้ status ให้เป็นตัวพิมพ์เล็กทั้ง 4 ชั้น | `npx vitest run` ผ่าน + `/store` แสดงไอดี + admin สร้างไอดีใหม่ได้ |
+| 1 | ตรวจ `DB.md` เทียบกับ production ก่อน แล้วใช้ migration **003+** เฉพาะสิ่งที่ยังขาด (ห้าม recreate ตาราง/วิวเดิม) | `select count(*) from public.accounts` = จำนวนไอดีจริง และ `/store` ยังแสดงข้อมูล |
+| 2 | คง `status` เป็น **PascalCase** และล็อกโดเมนด้วย enum/CHECK ให้ตรง production (`DB.md:18`) | `npx vitest run` ผ่าน + `/store` แสดงไอดี + admin สร้างไอดีใหม่ได้ + `select distinct status from public.accounts` คืนเฉพาะ 4 ค่า PascalCase |
 | 3 | เพิ่ม index ทั้งหมด (5.5) | `explain analyze` ของ query `/store` และ `/banners` ใช้ Index Scan ไม่ใช่ Seq Scan |
 | 4 | เพิ่ม trigger `updated_at` (5.6) | PATCH แล้ว `updated_at` เปลี่ยนโดยไม่ต้องส่งจากโค้ด |
-| 5 | เปิด RLS ใหม่ (5.7) | `set role anon;` อ่าน `account_secrets` ได้ 0 แถว และอ่าน `accounts` เฉพาะที่ขายได้ |
+| 5 | เปิด RLS ใหม่ (5.7) | `set role anon;` อ่าน `accounts_secret` ได้ 0 แถว และอ่าน `accounts` ผ่าน view ได้เฉพาะที่ขายได้ |
 | 6 | เปลี่ยน `/banners` เป็น RPC | query count ต่อ 1 page load = 1 (จาก 4–5) |
-| 7 | ลบตาราง/คอลัมน์เก่า (5.8) | ไม่มี query ใน `src/` อ้างถึง `accounts_public`/`accounts_secret` แล้ว |
+| 7 | ลบคอลัมน์/ตารางที่ยืนยันแล้วว่าไม่ใช้ (5.8) | ไม่มี query ใน `src/` อ้างถึง `accounts_secret` แล้ว — **ห้ามแตะ view `accounts_public`** เพราะ `/store` ใช้อยู่ |
 
 ### 7.1 Checklist ก่อนถือว่าเสร็จ
 
-- [ ] `grep -r "from('accounts" src/` คืนชื่อตารางชุดเดียว (ไม่ปน `accounts_public` / `accounts`)
-- [ ] `grep -rn "Available\|SoldOut\|Unavailable\|'Installment'" src/` ไม่เหลือ PascalCase
-- [ ] `grep -rn "category_ids" src/` = 0 (ถ้าย้ายไป junction แล้ว)
+- [ ] `grep -r "from('accounts" src/` คืนชื่อตารางชุดเดียว (ไม่ปน `accounts_public` / `accounts`) — **ยกเว้น** `/store` และ `GET /api/admin/accounts` ที่ต้องใช้ view `accounts_public` ตาม production
+- [ ] `grep -rn "'Available'\|'SoldOut'\|'Unavailable'\|'Installment'" src/` ยังเป็น PascalCase และตรงกับ `DB.md:18` (ห้ามเปลี่ยนเป็น lowercase)
+- [ ] `grep -rn "category_ids" src/` = 0 (หลังย้ายไป junction แล้ว)
 - [ ] `grep -rn "private_notes_enc" src/` ยังใช้ แต่ `unpackPrivateNotes` ถูกลบ
 - [ ] `grep -rn "admin_roles" src/` ใช้ helper กลาง ไม่เขียนซ้ำ 3 ที่
 - [ ] `select indexrelname from pg_stat_user_indexes where idx_scan = 0;` ไม่มี index ที่ไม่มีใครใช้
-- [ ] `select * from pg_policies where schemaname='public';` ไม่มี `USING (true)` กับ `authenticated` อีก
+- [ ] `select tablename, policyname, qual from pg_policies where schemaname='public';` ไม่มี `qual = 'true'` กับ `authenticated` และไม่มีชื่อ policy ซ้ำ (นับเทียบ `DB.md:123-145`)
 
 ---
 

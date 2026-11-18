@@ -1,7 +1,7 @@
 # Security Audit Report — PAPhum Shop & Studio
 
 > **ขอบเขต:** ตรวจจาก source code ใน repository ทั้งหมด (`src/`, `supabase/`, `scripts/`, `tests/`, config) ณ วันที่ 18 พฤศจิกายน 2026
-> **ข้อจำกัด:** ไม่ได้เชื่อมต่อฐานข้อมูลจริง จึงไม่สามารถยืนยันได้ว่า RLS/policy/คอลัมน์บน Supabase production ตรงกับไฟล์ migration หรือไม่ — ทุกข้อที่ขึ้นกับ DB จะระบุว่า "อ้างอิงจาก `supabase/migrations/001_initial_schema.sql`"
+> **อัปเดต 18 พ.ย. 2026:** มี production dump แล้วที่ `supabase/migrations/DB.md` (ผลรัน `information_schema` + `pg_policies`) — ข้อที่ขึ้นกับ DB ในรายงานนี้ **ตรวจทานกับ production แล้ว** และระบุหลักฐาน `DB.md:<บรรทัด>` กำกับ
 > **ระดับความรุนแรง:** Critical (ต้องแก้ก่อน deploy) → High (แก้ภายในสัปดาห์) → Medium (แก้ในรอบถัดไป) → Low (ปรับปรุง)
 
 ---
@@ -10,12 +10,12 @@
 
 | ระดับ | จำนวน | สาระสำคัญ |
 |---|---|---|
-| **Critical** | 4 | ข้อมูลลับไอดีเกมทั้งหมดเปิดให้ผู้ใช้ที่ล็อกอินคนใดก็ได้, ลิงก์ส่งงานถูก enumerate ได้, PIN ปลอมได้, รหัสผ่านถูกเก็บ plaintext ใน Google Sheets |
-| **High** | 6 | อัปโหลดไฟล์อะไรก็ได้ด้วย session ใดก็ได้, PIN brute-force ได้, สิทธิ์ไม่ถูกบังคับที่ชั้น DB, route ผลงานเปิดให้ authenticated ทุกคนลบ |
+| **Critical** | 4 | `accounts_secret` เปิดให้ผู้ใช้ที่ล็อกอินคนใดก็ได้, ลิงก์ส่งงานถูก enumerate ได้ (**ยืนยันใน production**), PIN ปลอมได้, รหัสผ่านถูกเก็บ plaintext ใน Google Sheets |
+| **High** | 6 | อัปโหลดไฟล์อะไรก็ได้ด้วย session ใดก็ได้, PIN brute-force ได้, `banners`/`banner_categories`/`installment_settings` เปิดให้ authenticated ทุกคนเขียน (**ยืนยันใน production**), route ผลงานไม่มี role guard |
 | **Medium** | 9 | ไม่มี CSRF, ไม่มี no-store, error รั่ว schema, formula injection, session lifecycle พัง, ไม่มี audit log |
-| **Low** | 8 | DoS จาก URL ผิดรูปแบบ, wildcard injection, ไม่มี noindex, URL แชร์ได้, ไม่มีตัวอย่าง env |
+| **Low** | 8 | DoS จาก URL ที่ผิดรูปแบบ, wildcard injection, ไม่มี noindex, URL แชร์ได้, ไม่มีตัวอย่าง env |
 
-**ข้อสรุปสำคัญ:** ระบบออกแบบชั้นป้องกันไว้ 3 ชั้น (session → role → PIN) และทำได้ครบใน Route Handler ของ `accounts` แต่ **ชั้นฐานข้อมูล (RLS) ไม่ได้บังคับ role เลย** และ **PIN cookie ไม่มีลายเซ็น** ทำให้การป้องกันทั้งหมดขึ้นกับสมมติฐานว่า "ผู้โจมตีจะไม่ยิง PostgREST ตรง และไม่ตั้งคุกกี้เอง" ซึ่งไม่ควรใช้เป็นสมมติฐานด้านความปลอดภัย
+**ข้อสรุปสำคัญ:** ระบบออกแบบชั้นป้องกันไว้ 3 ชั้น (session → role → PIN) และทำได้ครบใน Route Handler ของ `accounts` แต่ **RLS บังคับ role เฉพาะตาราง `accounts`** (`DB.md:129`) ส่วน `accounts_secret`, `deliveries`, `banners`, `banner_categories`, `installment_settings` ยังมี policy `true` ให้ `authenticated` (`DB.md:125-145`) และ **PIN cookie ไม่มีลายเซ็น** ทำให้การป้องกันขึ้นกับสมมติฐานว่า "ผู้โจมตีจะไม่ยิง PostgREST ตรง และไม่ตั้งคุกกี้เอง" ซึ่งไม่ควรใช้เป็นสมมติฐานด้านความปลอดภัย
 
 ```mermaid
 flowchart LR
@@ -24,6 +24,7 @@ flowchart LR
   B --> D["อ่าน deliveries<br/>token + original_r2_key"]
   D --> E["GET /api/deliver/token/download"]
   E --> F["ได้ไฟล์ต้นฉบับไร้ลายน้ำทุกงาน"]
+  B --> I["เขียน banners / banner_categories<br/>installment_settings ได้"]
   A --> G["ตั้งคุกกี้ paphum_admin_pin_ok = uuid ตัวเอง"]
   G --> H["ข้าม PIN → เห็น secret ผ่าน API"]
 ```
@@ -66,34 +67,24 @@ flowchart LR
 
 ## 2. Critical
 
-### C-1 — RLS เปิดข้อมูลลับให้ผู้ใช้ Supabase Auth ทุกคน
+### C-1 — RLS เปิดข้อมูลลับ (`accounts_secret`) และตารางงานให้ผู้ใช้ Supabase Auth ทุกคน
 
 | หัวข้อ | รายละเอียด |
 |---|---|
 | **ระดับ** | Critical |
-| **ไฟล์/บรรทัด** | `supabase/migrations/001_initial_schema.sql:122-126` (`accounts_public`), `:129-133` (`accounts_secret`), `:141-145` (`installment_settings`), `:153-157` (`banner_categories`), `:165-169` (`banners`), `:177-181` (`deliveries`) |
-| **พฤติกรรม** | policy ทั้ง 6 ใช้ `FOR ALL TO authenticated USING (true) WITH CHECK (true)` — "authenticated" คือผู้ใช้ Supabase Auth **คนใดก็ได้** ไม่ได้ผูกกับ `admin_roles` |
-| **ผลกระทบ** | ถ้าเปิด email signup ไว้ ใครสมัครก็ได้สิทธิ์เต็ม: อ่าน `cost` (plaintext), `private_notes`, ciphertext ทั้งหมด, แก้/ลบไอดี, เปลี่ยนเรทผ่อน, ลบผลงานทั้งพอร์ต |
-| **หลักฐานประกอบ** | `src/app/api/admin/accounts/route.ts:23-29` พิสูจน์ว่าแอปถือว่า role อยู่ใน `admin_roles` แต่ SQL ไม่มีตารางนี้และไม่มี policy อ้างถึง |
-| **ผลกระทบทางธุรกิจ** | ต้นทุนไอดี (กำไรจริงของร้าน) รั่วทันที; คู่แข่งรู้โครงสร้างราคาทั้งหมด |
+| **ไฟล์/บรรทัด** | **production:** `supabase/migrations/DB.md:125` (`accounts_secret` → `true`), `:130-132` (`deliveries` → `true`), `:136` (`installment_settings` → `true`), `:138-140` (`banners` → `true`), `:142-144` (`banner_categories` → `true`)<br>**ไฟล์ migration (ล้าสมัย):** `supabase/migrations/001_initial_schema.sql:129-133, 141-145, 153-157, 165-169, 177-181` |
+| **พฤติกรรม** | policy ทั้ง 5 ชุดใช้ `FOR ALL TO authenticated USING (true) WITH CHECK (true)` — "authenticated" คือผู้ใช้ Supabase Auth **คนใดก็ได้** ไม่ได้ผูกกับ `admin_roles`<br>**ข้อยกเว้นที่ production ทำถูกแล้ว:** ตาราง `accounts` ใช้ policy owner-only ผ่าน `admin_roles` (`DB.md:129`) — ห้ามแก้ policy นี้ให้หลวมลง |
+| **ผลกระทบ** | ใครสมัคร Supabase Auth ได้ก็อ่าน `accounts_secret` ทั้งตาราง: `cost` (ต้นทุน = กำไรจริงของร้าน), ciphertext ของรหัสผ่าน/seed 2FA, `private_notes` และแก้/ลบ `banners`, `banner_categories`, เปลี่ยนเรทผ่อนได้<br>**สิ่งที่อ่านไม่ได้แล้ว:** ตาราง `accounts` (owner-only) — แต่ ciphertext ชุดเดียวกันยังอยู่ใน `accounts_secret` |
+| **ผลกระทบทางธุรกิจ** | ต้นทุนไอดีรั่วทันที; คู่แข่งรู้โครงสร้างราคา; ผลงานทั้งพอร์ตถูกลบได้ |
 
 **วิธีแก้เชิงเทคนิค**
 
-1. สร้างตาราง `admin_roles` และฟังก์ชันช่วยตรวจสิทธิ์
+> **ห้ามสร้าง policy บน `accounts_public`** — มันเป็น **VIEW** (`DB.md:114-116`) การบังคับสิทธิ์ต้องทำที่ตารางฐาน `accounts` ซึ่ง production ทำถูกแล้ว (`DB.md:129`)
+> **ต้อง drop policy ทุกชื่อเดิมก่อน** เพราะ production มีชื่อซ้ำหลายชุด (เช่น `deliveries` มี 4 policy) ถ้า drop ไม่ครบ ตัวที่เหลือจะยังเปิดอยู่
+> รายการ `drop` ที่ครบทุกชื่ออยู่ใน `docs/05-database-normalize-and-optimize.md` §5.7 — ใช้ชุดนั้นแทนการเขียนใหม่
 
 ```sql
-create table public.admin_roles (
-  user_id uuid primary key references auth.users(id) on delete cascade,
-  username text unique not null,
-  role text not null check (role in ('owner','staff')),
-  created_at timestamptz not null default now()
-);
-
-create or replace function public.is_admin()
-returns boolean language sql stable security definer set search_path = public as $$
-  select exists (select 1 from public.admin_roles where user_id = auth.uid());
-$$;
-
+-- 1) ฟังก์ชันช่วย (ถ้ายังไม่มี)
 create or replace function public.is_owner()
 returns boolean language sql stable security definer set search_path = public as $$
   select exists (
@@ -101,39 +92,50 @@ returns boolean language sql stable security definer set search_path = public as
     where user_id = auth.uid() and role = 'owner'
   );
 $$;
-```
 
-2. ลบ policy `USING(true)` แล้วแทนด้วย policy ที่แยก read/write
-
-```sql
+-- 2) accounts_secret: owner เท่านั้น (ชื่อ policy อ้าง DB.md:125)
 drop policy if exists "Admin full access on accounts_secret" on public.accounts_secret;
-drop policy if exists "Admin full access on accounts_public" on public.accounts_public;
-
--- อ่าน secret: owner เท่านั้น
-create policy "owner read secrets"
-  on public.accounts_secret for select to authenticated
-  using (public.is_owner());
-
-create policy "owner write secrets"
+create policy "owner manage account secrets"
   on public.accounts_secret for all to authenticated
   using (public.is_owner()) with check (public.is_owner());
 
--- แก้ไขไอดี: owner เท่านั้น (staff อ่านข้อมูลสาธารณะได้)
-create policy "admin read accounts"
-  on public.accounts_public for select to authenticated
-  using (public.is_admin());
-create policy "owner write accounts"
-  on public.accounts_public for insert to authenticated
-  with check (public.is_owner());
-create policy "owner update accounts"
-  on public.accounts_public for update to authenticated
+-- 3) banners / banner_categories / installment_settings: owner เขียน, ทุกคนอ่าน
+drop policy if exists "Authenticated manage banners" on public.banners;
+drop policy if exists "Admin full access on banners" on public.banners;
+create policy "owner manage banners"
+  on public.banners for all to authenticated
   using (public.is_owner()) with check (public.is_owner());
-create policy "owner delete accounts"
-  on public.accounts_public for delete to authenticated
-  using (public.is_owner());
+
+drop policy if exists "Authenticated manage banner categories" on public.banner_categories;
+drop policy if exists "Admin full access on banner categories" on public.banner_categories;
+create policy "owner manage categories"
+  on public.banner_categories for all to authenticated
+  using (public.is_owner()) with check (public.is_owner());
+
+drop policy if exists "Admin can update installment settings" on public.installment_settings;
+create policy "owner manage settings"
+  on public.installment_settings for all to authenticated
+  using (public.is_owner()) with check (public.is_owner());
+
+-- 4) deliveries: ปิดการอ่านของ anon/authenticated (ดู C-2)
+drop policy if exists "Public read active deliveries" on public.deliveries;
+drop policy if exists "Public can read active deliveries" on public.deliveries;
+drop policy if exists "Authenticated manage deliveries" on public.deliveries;
+drop policy if exists "Admin full access on deliveries" on public.deliveries;
+create policy "owner manage deliveries"
+  on public.deliveries for all to authenticated
+  using (public.is_owner()) with check (public.is_owner());
 ```
 
-3. ตรวจสอบซ้ำว่า anon ไม่มีสิทธิ์เขียนตารางใดเลย (`grant`/`revoke` ให้ชัดเจนแทนการพึ่ง default)
+**ตรวจซ้ำ:** anon ต้องไม่มีสิทธิ์เขียนตารางใดเลย และ **อย่าแตะ policy ของ `accounts`** ที่ทำถูกอยู่แล้ว
+
+```sql
+select tablename, policyname, roles, cmd, qual
+from pg_policies where schemaname = 'public'
+order by tablename, policyname;
+```
+
+**เกณฑ์ผ่าน:** `set role authenticated; select * from public.accounts_secret;` ต้องได้ 0 แถว (สำหรับ user ที่ไม่ได้อยู่ใน `admin_roles`)
 
 ---
 
@@ -142,23 +144,27 @@ create policy "owner delete accounts"
 | หัวข้อ | รายละเอียด |
 |---|---|
 | **ระดับ** | Critical |
-| **ไฟล์/บรรทัด** | `supabase/migrations/001_initial_schema.sql:172-175` |
-| **พฤติกรรม** | `CREATE POLICY "Public can read active deliveries" ON public.deliveries FOR SELECT TO anon, authenticated USING (expires_at > now());` — ไม่มีเงื่อนไข token |
+| **ไฟล์/บรรทัด** | **production (ยืนยันแล้ว):** `supabase/migrations/DB.md:131` และ `:133` — มี **2 policy ซ้ำ** ที่ให้ `anon, authenticated` อ่าน `USING (expires_at > now())`<br>**ไฟล์ migration:** `supabase/migrations/001_initial_schema.sql:172-175` |
+| **พฤติกรรม** | policy ทั้งสองไม่มีเงื่อนไข token — ใครถือ anon key อ่าน `deliveries` ได้ทุกแถวที่ยังไม่หมดอายุ |
 | **ผลกระทบ** | anon key อยู่ใน bundle อยู่แล้ว (`src/lib/supabase/server.ts:9`, `AdminLoginForm.tsx:15`) → ใครก็ยิง `GET /rest/v1/deliveries?select=token,original_r2_key,original_filename` แล้วได้ทุกงานที่ยังไม่หมดอายุ จากนั้นเรียก `/api/deliver/{token}/download` เพื่อรับ presigned URL ของไฟล์ต้นฉบับ |
 | **ทำไมร้ายแรง** | ทำให้ "secret link 128 บิต" ไม่มีความหมาย และไฟล์ที่ลูกค้าจ่ายเงินซื้อถูกดาวน์โหลดได้ฟรี |
 
 **วิธีแก้**
 
 ```sql
+-- ต้อง drop ให้ครบทั้ง 2 ชื่อ (production มีซ้ำ)
+drop policy if exists "Public read active deliveries" on public.deliveries;
 drop policy if exists "Public can read active deliveries" on public.deliveries;
+drop policy if exists "Authenticated manage deliveries" on public.deliveries;
+drop policy if exists "Admin full access on deliveries" on public.deliveries;
 
 -- ลบสิทธิ์ anon ทั้งหมดบนตารางนี้
 revoke all on public.deliveries from anon;
 
--- ให้เฉพาะเจ้าของข้อมูลผ่าน server (route handler ที่มี service role หรือ security definer function)
-create policy "admin manage deliveries"
+-- ให้เฉพาะ owner ผ่าน server (route handler ที่มี service role หรือ security definer function)
+create policy "owner manage deliveries"
   on public.deliveries for all to authenticated
-  using (public.is_admin()) with check (public.is_admin());
+  using (public.is_owner()) with check (public.is_owner());
 ```
 
 และเปลี่ยน download route ให้ใช้ **service role client เฉพาะฝั่ง server** (ไม่ใช่ anon client ที่รับผลจาก RLS) พร้อมเพิ่ม rate limit ต่อ IP/token
@@ -338,22 +344,24 @@ create index on public.admin_pin_attempts (user_id, created_at desc);
 
 ---
 
-### H-4 — Schema drift ทำให้โมเดลสิทธิ์และข้อมูลใช้กับ DB จริงไม่ได้
+### H-4 — ไฟล์ migration ไม่ตรงกับ production (Schema Drift)
 
 | หัวข้อ | รายละเอียด |
 |---|---|
 | **ระดับ** | High |
-| **ไฟล์/บรรทัด** | `001_initial_schema.sql:5-41` (มี `accounts_public` + `accounts_secret`) vs `src/app/id/[code]/page.tsx:24`, `src/app/admin/page.tsx:67`, `src/app/api/admin/accounts/route.ts:159,241`, `[id]/route.ts:172,224,312,379` (เรียก `accounts`); `src/app/admin/page.tsx:26` (เรียก `admin_roles` ที่ไม่มีใน SQL); `001:8` (`status in ('available',...)`) vs `src/types/database.ts:1` (`'Available'`) |
-| **พฤติกรรม** | ชื่อตาราง/คอลัมน์/ค่า enum ระหว่างโค้ดกับ migration ไม่ตรงกันอย่างน้อย 14 คอลัมน์ + 2 ตาราง |
-| **ผลกระทบ** | ถ้าใช้ migration นี้สร้าง DB: `/store` และ `/id/[code]` ว่าง, admin สร้างไอดีไม่ได้ (CHECK violation), `/banners` พังตั้งแต่ `order('hide_preview')`; ถ้าใช้ DB ที่โค้ดคาดหวัง: ตาราง `accounts_secret` ไม่ถูกใช้ → การแยกข้อมูลสาธารณะ/ลับที่ออกแบบไว้ไม่มีผลจริง |
-| **เชิงความปลอดภัย** | RLS ที่เขียนไว้ป้องกัน `accounts_secret` **ไม่ป้องกันตาราง `accounts` ที่โค้ดใช้จริง** (ตารางนั้นไม่มี policy ในไฟล์) |
+| **ไฟล์/บรรทัด** | **production ตรงกับโค้ด:** `supabase/migrations/DB.md:16-41` (`accounts`), `:68-71` (`admin_roles`), `:114-116` (view `accounts_public`) vs โค้ด `src/app/id/[code]/page.tsx:24`, `src/app/admin/page.tsx:67`, `src/app/api/admin/accounts/route.ts:159,241`, `[id]/route.ts:172,224,312,379`<br>**ไฟล์ที่ล้าสมัย:** `001_initial_schema.sql:5-41` (แยก `accounts_public` + `accounts_secret`, ไม่มี `accounts`/`admin_roles`, CHECK ตัวพิมพ์เล็กที่ `:8`) |
+| **พฤติกรรม** | ความจริงคือ production ใช้ `accounts` (ตารางเดียว) + view `accounts_public` + `admin_roles` แต่ไฟล์ `001` เขียนอีกแบบ → ใครอ่าน/รันไฟล์ 001 จะเข้าใจผิดและอาจสร้างตารางซ้ำหรือแก้สถานะเป็นตัวพิมพ์เล็ก |
+| **ผลกระทบ** | ถ้ามีคนรัน `001` บน production: `create table accounts_public` จะล้มเหลว (มี view ชื่อนี้) หรือถ้า drop view ทิ้ง → `/store` พัง; ถ้าแก้ `status` เป็น lowercase → view กรองไม่เจอข้อมูลทั้งหมด; ถ้าแก้ CHECK เป็น lowercase → INSERT จากแอป (PascalCase) ล้มเหลวทุกครั้ง |
+| **เชิงความปลอดภัย** | policy ของ `accounts` ใน production บังคับ owner ถูกต้อง (`DB.md:129`) แต่ถ้า agent สร้าง policy ใหม่จากไฟล์ 001 (`USING(true)`) จะเปิดตารางที่มี ciphertext ให้ทุกคนอ่าน |
 
 **วิธีแก้**
 
-1. ตัดสินใจโมเดลเดียว: แนะนำ **`accounts` (base) + `account_secrets` (1:1, owner-only RLS)** และลบ `accounts_public`/`accounts_secret` ที่ไม่ได้ใช้
-2. สร้าง migration ใหม่ (`002_align_schema.sql`) ที่มีคำสั่ง `ALTER TABLE ... ADD COLUMN` ครบทุกคอลัมน์ที่โค้ดใช้ พร้อม `IF NOT EXISTS`
-3. กำหนด enum กลาง: `create type account_status as enum ('available','installment','sold','unavailable');` แล้วแก้ทั้งโค้ดและ type ให้เป็นตัวพิมพ์เล็ก **หรือ** เปลี่ยน CHECK ให้ตรงกับ PascalCase (เลือกอย่างเดียว)
-4. เพิ่ม integration test ที่ query ตารางจริงด้วย service role เพื่อจับ drift ก่อน deploy
+1. **ถือ `supabase/migrations/DB.md` เป็นแหล่งความจริง** และถือ `001_initial_schema.sql` เป็นเอกสารประวัติ (ห้ามรันซ้ำ)
+2. งาน schema ใหม่ทั้งหมดให้ใช้ migration **`003_*.sql` ขึ้นไป** และใช้ `add column if not exists` — **ห้าม recreate ตาราง/วิวที่มีอยู่**
+3. ถ้าจะล็อกโดเมนสถานะ ให้สร้าง enum ด้วย **PascalCase** (`'Unavailable','Available','Installment','SoldOut'`) และ drop/recreate view ตามลำดับ (SQL อยู่ใน `docs/05` §5.1) — **ห้ามใช้ lowercase**
+4. เพิ่ม integration test ที่ query `information_schema.columns` เทียบกับรายการคอลัมน์ที่โค้ดใช้ เพื่อจับ drift ใน CI
+
+> **หมายเหตุ:** ก่อนมี `DB.md` รายงานนี้เคยสรุปว่า migration คือความจริง — ข้อสรุปนั้นถูกกลับแล้วด้วยหลักฐานจาก production dump
 
 ---
 
@@ -364,6 +372,7 @@ create index on public.admin_pin_attempts (user_id, created_at desc);
 | **ระดับ** | High |
 | **ไฟล์/บรรทัด** | `src/app/api/admin/banners/route.ts:14-22, 63-70, 172-179, 340-347`; `src/app/api/admin/banner-categories/route.ts:14-21, 59-66, 105-112, 160-167`; `src/app/api/admin/upload/presign/route.ts:97-104` |
 | **พฤติกรรม** | ทั้ง 9 handler ตรวจแค่ `auth.getUser()` ไม่มี `requireOwner` และไม่มี PIN — ต่างจาก `accounts` ที่มีครบ |
+| **ยืนยันกับ production** | ไม่มีชั้น DB กันให้ด้วย: `banners` และ `banner_categories` มี policy `true` ให้ `authenticated` (`supabase/migrations/DB.md:138-144`) → ยิง PostgREST ตรงก็ลบได้โดยไม่ต้องผ่าน route เลย |
 | **ผลกระทบ** | บัญชีที่ล็อกอินได้แต่ไม่ใช่แอดมิน (หรือ staff ที่ถูกจำกัดสิทธิ์ใน UI) ยิง API ลบผลงานทั้งพอร์ต, เปลี่ยนชื่อหมวด, อัปโหลดไฟล์ได้ |
 | **ผลกระทบทางธุรกิจ** | ข้อมูลผลงานซึ่งเป็นสินทรัพย์หลักของสตูดิโอสูญหายได้ |
 
@@ -494,7 +503,7 @@ const safe = (v) => {
 | หัวข้อ | รายละเอียด |
 |---|---|
 | **ระดับ** | Medium |
-| **ไฟล์/บรรทัด** | grep `audit` ใน `src/` = 0; ไม่มีตาราง audit ใน `001` |
+| **ไฟล์/บรรทัด** | grep `audit` ใน `src/` = 0; ไม่มีตาราง audit ใน production (`supabase/migrations/DB.md:14-41` = รายการตารางทั้งหมด) และไม่มีใน `001` |
 | **ผลกระทบ** | เมื่อ secret รั่วจะไม่รู้ว่าใครเข้าถึง/แก้เมื่อไร; ไม่ผ่านข้อกำหนดพื้นฐานของระบบที่เก็บ credential |
 | **วิธีแก้** | ตาราง `admin_audit_log(id, user_id, action, target_table, target_id, ip, user_agent, created_at, meta jsonb)` + เขียนทุกครั้งที่มีการอ่าน secret/ลบ/แก้ role |
 
@@ -537,8 +546,8 @@ const nextConfig: NextConfig = {
 | หัวข้อ | รายละเอียด |
 |---|---|
 | **ระดับ** | Medium |
-| **ไฟล์/บรรทัด** | `001_initial_schema.sql:184-188` (`admin_security FOR ALL USING (auth.uid() = user_id)`) |
-| **พฤติกรรม** | เจ้าของแถวสามารถ `PATCH /rest/v1/admin_security` เปลี่ยน `pin_hash`/`pin_salt` ของตัวเองได้โดยไม่ต้องยืนยัน PIN เดิม |
+| **ไฟล์/บรรทัด** | **production:** `supabase/migrations/DB.md:127-128` — มี **2 policy ซ้ำ** ที่ให้เจ้าของแถว `ALL` บน `admin_security`<br>**ไฟล์ migration:** `001_initial_schema.sql:184-188` (`FOR ALL USING (auth.uid() = user_id)`) |
+| **พฤติกรรม** | เจ้าของแถวสามารถ `PATCH /rest/v1/admin_security` เปลี่ยน `pin_hash`/`pin_salt` ของตัวเองได้โดยไม่ต้องยืนยัน PIN เดิม (ทั้ง 2 policy อนุญาตเหมือนกัน — drop ต้องครบทั้งคู่) |
 | **ผลกระทบ** | ข้ามขั้นตอน "เปลี่ยน PIN ต้องรู้ PIN เดิม" (ซึ่ง route ทำถูกที่ `pin/route.ts:93-111`) |
 | **วิธีแก้** | ให้ `SELECT` อย่างเดียวแก่เจ้าของ และเขียนผ่าน RPC `security definer` ที่ตรวจ PIN เดิม (หรือให้ service role เขียนเท่านั้น) |
 
@@ -597,8 +606,8 @@ const nextConfig: NextConfig = {
 
 | ลำดับ | งาน | ไฟล์ | เวลา |
 |---|---|---|---|
-| 1 | ปิด RLS ที่หลวม + สร้าง `admin_roles`/`is_owner()` | migration ใหม่ | 2–3 ชม. |
-| 2 | ลบ policy anon ของ `deliveries` + ให้ download ใช้ service role | `001`, `download/route.ts` | 1–2 ชม. |
+| 1 | ปิด policy `USING(true)` ที่เหลือ + ใช้ `is_owner()` (production มี `admin_roles` แล้ว — `DB.md:68-71`) | migration ใหม่ `003+` | 2–3 ชม. |
+| 2 | ลบ policy anon ของ `deliveries` (2 ชื่อ — `DB.md:131,133`) + ให้ download ใช้ service role | migration ใหม่, `download/route.ts` | 1–2 ชม. |
 | 3 | เปลี่ยน PIN cookie เป็น HMAC token + ลดอายุ | `pin/route.ts`, `lib/pin-token.ts` ใหม่ | 2 ชม. |
 | 4 | หยุดส่ง plaintext ไป Sheets | `sheets-sync.ts`, `accounts/route.ts`, `google-apps-script.js` | 2 ชม. |
 | 5 | เพิ่ม role guard ให้ banner 3 route + presign | `lib/auth/guard.ts` ใหม่ + 4 route | 2 ชม. |

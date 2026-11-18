@@ -65,8 +65,8 @@ flowchart TD
 
 | ข้อเท็จจริง | ผลกระทบ |
 |---|---|
-| ตาราง `admin_roles` **ไม่มีใน migration** (ทั้งไฟล์ 188 บรรทัด) | ถ้า DB จริงไม่มีตารางนี้ → query error → `roleRow = null` → **ทุกคนเป็น staff รวม owner** |
-| ไม่มี RLS policy สำหรับ `admin_roles` ในไฟล์ SQL | ถ้าเปิด RLS โดยไม่มี policy การอ่านจะได้ 0 แถว |
+| ตาราง `admin_roles` **มีอยู่จริงใน production** (`supabase/migrations/DB.md:68-71`) แต่ไม่มีในไฟล์ `001_initial_schema.sql` (188 บรรทัด) ซึ่งล้าสมัย | ถ้าใครสร้าง DB ใหม่จาก `001` จะ query error → `roleRow = null` → **ทุกคนเป็น staff รวม owner** |
+| production มี policy `Users can read own role` (`auth.uid() = user_id`) อยู่แล้ว (`DB.md:126`) | อ่าน role ของตัวเองได้ แต่ไม่มี policy ให้ owner จัดการ role ของคนอื่น → ต้องเพิ่มเมื่อทำฟีเจอร์จัดการทีม |
 | fallback เป็น `staff` (`:31`) | ปลอดภัยเชิง fail-safe แต่ทำให้ระบบใช้งานไม่ได้ถ้าตั้งค่าผิด |
 | ไม่มี `redirect()` | ผู้ใช้ authenticated ที่ไม่ใช่แอดมินยังเห็นหน้า dashboard (โหมด staff) |
 
@@ -141,8 +141,8 @@ flowchart TD
 
 | # | ช่องว่าง | หลักฐาน | ระดับ |
 |---|---|---|---|
-| R-1 | RLS ให้ `authenticated` ทุกคน `ALL USING(true)` บน `accounts`/`accounts_secret` → staff ยิง PostgREST ตรงได้ | `001:122-133` | วิกฤต |
-| R-2 | ไม่มี policy ใดอ้าง `admin_roles` → สิทธิ์ไม่ถูกบังคับที่ชั้น DB | ทั้งไฟล์ SQL | วิกฤต |
+| R-1 | RLS ให้ `authenticated` ทุกคน `ALL USING(true)` บน `accounts_secret`/`deliveries`/`banners`/`banner_categories`/`installment_settings` → staff ยิง PostgREST ตรงได้ (ตาราง `accounts` **บังคับ owner แล้ว** — `DB.md:129`) | `DB.md:125-145` | วิกฤต |
+| R-2 | policy ที่อ้าง `admin_roles` มีเพียงตัวเดียวบน `accounts` → อีก 5 ตารางไม่ผูกกับ role ที่ชั้น DB | `DB.md:126,129` | วิกฤต |
 | R-3 | staff ตั้ง PIN ของตัวเองได้ (`POST /api/admin/pin`) แม้ไม่ได้สิทธิ์ secret | `pin/route.ts:34-91` | กลาง |
 | R-4 | ไม่มี middleware/layout ตรวจ role | glob ไม่พบ `middleware.*`, `admin/layout.tsx` | สูง |
 
