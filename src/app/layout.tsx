@@ -19,26 +19,9 @@ const notoSansThai = Noto_Sans_Thai({
   display: 'swap',
 });
 
-const SITE_TITLE = 'PAPhum | รับซื้อ ขาย ทำป้ายROV';
-const SITE_DESCRIPTION =
-  'RoV by PAPhum ผ่อน-ผ่านกลางได้และรับทำป้ายขายไอดีงานไว';
-
 export const metadata: Metadata = {
-  metadataBase: new URL('https://paphumshop.vercel.app'),
-  title: SITE_TITLE,
-  description: SITE_DESCRIPTION,
-  openGraph: {
-    title: SITE_TITLE,
-    description: SITE_DESCRIPTION,
-    url: 'https://paphumshop.vercel.app',
-    siteName: 'PAPhum',
-    type: 'website',
-  },
-  twitter: {
-    card: 'summary_large_image',
-    title: SITE_TITLE,
-    description: SITE_DESCRIPTION,
-  },
+  title: 'PAPhum | รับซื้อ ขาย ทำป้ายRoV',
+  description: 'RoV by PAPhum ผ่อน-ผ่านกลางได้และรับทำป้ายขายไอดีงานไวม้าก',
 };
 
 export default function RootLayout({
