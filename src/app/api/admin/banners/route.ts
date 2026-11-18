@@ -1,6 +1,6 @@
-import { NextRequest, NextResponse } from 'next/server';
+import { NextRequest } from 'next/server';
 import { randomBytes } from 'node:crypto';
-import { createSupabaseServerClient } from '@/lib/supabase/server';
+import { jsonNoStore, requireAdmin } from '@/lib/auth/guard';
 
 const MAX_PINNED_PER_CATEGORY = 10;
 
@@ -12,14 +12,10 @@ function toUniqueStringArray(value: unknown): string[] {
 }
 
 export async function GET(req: NextRequest) {
-  const supabase = await createSupabaseServerClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
+  const auth = await requireAdmin();
+  if (!auth.ok) return auth.response;
 
-  if (!user) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  }
+  const { supabase } = auth.ctx;
 
   const { searchParams } = new URL(req.url);
 
@@ -30,17 +26,17 @@ export async function GET(req: NextRequest) {
       .select('id', { count: 'exact', head: true });
 
     if (error) {
-      return NextResponse.json({ error: error.message }, { status: 500 });
+      return jsonNoStore({ error: error.message }, { status: 500 });
     }
 
     const total = count ?? 0;
-    return NextResponse.json({ total, nextCode: String(total + 1) });
+    return jsonNoStore({ total, nextCode: String(total + 1) });
   }
 
   const categoryId = searchParams.get('categoryId');
 
   if (!categoryId) {
-    return NextResponse.json({ error: 'Missing categoryId' }, { status: 400 });
+    return jsonNoStore({ error: 'Missing categoryId' }, { status: 400 });
   }
 
   const { data, error } = await supabase
@@ -53,28 +49,24 @@ export async function GET(req: NextRequest) {
     .limit(2000);
 
   if (error) {
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    return jsonNoStore({ error: error.message }, { status: 500 });
   }
 
-  return NextResponse.json({ banners: data ?? [] });
+  return jsonNoStore({ banners: data ?? [] });
 }
 
 export async function POST(req: NextRequest) {
-  const supabase = await createSupabaseServerClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
+  const auth = await requireAdmin();
+  if (!auth.ok) return auth.response;
 
-  if (!user) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  }
+  const { supabase } = auth.ctx;
 
   const body = await req.json();
 
   if (body.action === 'create_category') {
     const name = String(body.name ?? '').trim();
     if (!name) {
-      return NextResponse.json({ error: 'กรุณาระบุชื่อหมวดหมู่' }, { status: 400 });
+      return jsonNoStore({ error: 'กรุณาระบุชื่อหมวดหมู่' }, { status: 400 });
     }
 
     const slug =
@@ -105,15 +97,15 @@ export async function POST(req: NextRequest) {
       .single();
 
     if (error) {
-      return NextResponse.json({ error: error.message }, { status: 400 });
+      return jsonNoStore({ error: error.message }, { status: 400 });
     }
 
-    return NextResponse.json({ category });
+    return jsonNoStore({ category });
   }
 
   const watermarkedUrl = String(body.watermarkedUrl ?? body.watermarked_url ?? '').trim();
   if (!watermarkedUrl) {
-    return NextResponse.json({ error: 'ไม่พบ URL รูปภาพ' }, { status: 400 });
+    return jsonNoStore({ error: 'ไม่พบ URL รูปภาพ' }, { status: 400 });
   }
 
   const uniqueCategoryIds: string[] = Array.isArray(body.categoryIds)
@@ -137,7 +129,7 @@ export async function POST(req: NextRequest) {
     .single();
 
   if (bannerError) {
-    return NextResponse.json({ error: bannerError.message }, { status: 400 });
+    return jsonNoStore({ error: bannerError.message }, { status: 400 });
   }
 
   let deliveryToken: string | null = null;
@@ -165,18 +157,14 @@ export async function POST(req: NextRequest) {
     }
   }
 
-  return NextResponse.json({ banner, deliveryToken });
+  return jsonNoStore({ banner, deliveryToken });
 }
 
 export async function PATCH(req: NextRequest) {
-  const supabase = await createSupabaseServerClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
+  const auth = await requireAdmin();
+  if (!auth.ok) return auth.response;
 
-  if (!user) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  }
+  const { supabase } = auth.ctx;
 
   const body = await req.json();
 
@@ -190,7 +178,7 @@ export async function PATCH(req: NextRequest) {
           .eq('id', id)
       )
     );
-    return NextResponse.json({ ok: true });
+    return jsonNoStore({ ok: true });
   }
 
   if (body.action === 'bulk_update_categories') {
@@ -199,10 +187,10 @@ export async function PATCH(req: NextRequest) {
     const mode = String(body.mode ?? 'add') as 'add' | 'replace' | 'remove';
 
     if (bannerIds.length === 0) {
-      return NextResponse.json({ error: 'กรุณาเลือกรูปอย่างน้อย 1 รูป' }, { status: 400 });
+      return jsonNoStore({ error: 'กรุณาเลือกรูปอย่างน้อย 1 รูป' }, { status: 400 });
     }
     if ((mode === 'add' || mode === 'replace') && targetCategoryIds.length === 0) {
-      return NextResponse.json({ error: 'กรุณาเลือกหมวดหมู่อย่างน้อย 1 หมวด' }, { status: 400 });
+      return jsonNoStore({ error: 'กรุณาเลือกหมวดหมู่อย่างน้อย 1 หมวด' }, { status: 400 });
     }
 
     const { data: existingRows, error: fetchErr } = await supabase
@@ -211,7 +199,7 @@ export async function PATCH(req: NextRequest) {
       .in('id', bannerIds);
 
     if (fetchErr || !existingRows) {
-      return NextResponse.json(
+      return jsonNoStore(
         { error: fetchErr?.message ?? 'ไม่พบข้อมูลรูปภาพ' },
         { status: 400 }
       );
@@ -246,7 +234,7 @@ export async function PATCH(req: NextRequest) {
       })
     );
 
-    return NextResponse.json({ ok: true, updatedCount: existingRows.length });
+    return jsonNoStore({ ok: true, updatedCount: existingRows.length });
   }
 
   if (body.action === 'update_categories') {
@@ -254,7 +242,7 @@ export async function PATCH(req: NextRequest) {
     const categoryIds = toUniqueStringArray(body.categoryIds);
 
     if (!bannerId) {
-      return NextResponse.json({ error: 'Missing bannerId' }, { status: 400 });
+      return jsonNoStore({ error: 'Missing bannerId' }, { status: 400 });
     }
 
     const { error } = await supabase
@@ -266,10 +254,10 @@ export async function PATCH(req: NextRequest) {
       .eq('id', bannerId);
 
     if (error) {
-      return NextResponse.json({ error: error.message }, { status: 400 });
+      return jsonNoStore({ error: error.message }, { status: 400 });
     }
 
-    return NextResponse.json({ ok: true, category_ids: categoryIds });
+    return jsonNoStore({ ok: true, category_ids: categoryIds });
   }
 
   const bannerId = String(body.bannerId ?? '').trim();
@@ -277,7 +265,7 @@ export async function PATCH(req: NextRequest) {
   const contextCategoryId = body.categoryId ? String(body.categoryId).trim() : null;
 
   if (!bannerId) {
-    return NextResponse.json({ error: 'Missing bannerId' }, { status: 400 });
+    return jsonNoStore({ error: 'Missing bannerId' }, { status: 400 });
   }
 
   const { data: targetBanner } = await supabase
@@ -287,7 +275,7 @@ export async function PATCH(req: NextRequest) {
     .single();
 
   if (!targetBanner) {
-    return NextResponse.json({ error: 'ไม่พบรูปภาพ' }, { status: 404 });
+    return jsonNoStore({ error: 'ไม่พบรูปภาพ' }, { status: 404 });
   }
 
   const checkCatId = contextCategoryId || targetBanner.category_id;
@@ -300,7 +288,7 @@ export async function PATCH(req: NextRequest) {
       .eq('is_pinned', true);
 
     if ((count ?? 0) >= MAX_PINNED_PER_CATEGORY) {
-      return NextResponse.json(
+      return jsonNoStore(
         {
           error: `ปักหมุดได้สูงสุด ${MAX_PINNED_PER_CATEGORY} รูปต่อหมวดหมู่ กรุณายกเลิกหมุดรูปอื่นก่อน`,
         },
@@ -317,7 +305,7 @@ export async function PATCH(req: NextRequest) {
       .eq('id', bannerId);
 
     if (error) {
-      return NextResponse.json({ error: error.message }, { status: 400 });
+      return jsonNoStore({ error: error.message }, { status: 400 });
     }
   } else {
     const { error } = await supabase
@@ -329,33 +317,29 @@ export async function PATCH(req: NextRequest) {
       .eq('id', bannerId);
 
     if (error) {
-      return NextResponse.json({ error: error.message }, { status: 400 });
+      return jsonNoStore({ error: error.message }, { status: 400 });
     }
   }
 
-  return NextResponse.json({ ok: true });
+  return jsonNoStore({ ok: true });
 }
 
 export async function DELETE(req: NextRequest) {
-  const supabase = await createSupabaseServerClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
+  const auth = await requireAdmin({ ownerOnly: true });
+  if (!auth.ok) return auth.response;
 
-  if (!user) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  }
+  const { supabase } = auth.ctx;
 
   const { searchParams } = new URL(req.url);
   const id = searchParams.get('id');
   if (!id) {
-    return NextResponse.json({ error: 'Missing id' }, { status: 400 });
+    return jsonNoStore({ error: 'Missing id' }, { status: 400 });
   }
 
   const { error } = await supabase.from('banners').delete().eq('id', id);
   if (error) {
-    return NextResponse.json({ error: error.message }, { status: 400 });
+    return jsonNoStore({ error: error.message }, { status: 400 });
   }
 
-  return NextResponse.json({ ok: true });
+  return jsonNoStore({ ok: true });
 }

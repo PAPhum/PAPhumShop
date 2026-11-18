@@ -6,16 +6,6 @@ export interface SheetAccountPayload {
   min_down_weekly: number;
   min_down_monthly: number;
   tags: string[];
-  game_uid: string;
-  login_provider: string;
-  username: string;
-  password: string;
-  authenticator: string;
-  gmail: string;
-  gmail_password: string;
-  gmail_authenticator: string;
-  gmail_recovery: string;
-  private_notes: string;
   updated_at: string;
 }
 

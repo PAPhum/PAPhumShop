@@ -121,7 +121,7 @@ export default function AdminDashboardClient({
   const [syncMessage, setSyncMessage] = useState<string | null>(null);
   const [savingSettings, setSavingSettings] = useState<boolean>(false);
   const [settingsSaved, setSettingsSaved] = useState<boolean>(false);
-
+  const [settingsError, setSettingsError] = useState<string | null>(null);
   const filteredAccounts = useMemo(() => {
     const q = searchQuery.trim().toLowerCase();
     return accounts.filter((acc) => {
@@ -196,11 +196,18 @@ export default function AdminDashboardClient({
 
   const handleLogout = async () => {
     await fetch('/api/admin/logout', { method: 'POST' }).catch(() => null);
+    setPinUnlocked(false);
+    setSecretMap({});
+    router.replace('/admin');
     router.refresh();
   };
 
   const handleLockPin = async () => {
-    await fetch('/api/admin/pin', { method: 'DELETE' }).catch(() => null);
+    await fetch('/api/admin/pin', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'lock' }),
+    }).catch(() => null);
     setPinUnlocked(false);
     setSecretMap({});
     setViewMode('cards');
@@ -283,16 +290,20 @@ export default function AdminDashboardClient({
     e.preventDefault();
     setSavingSettings(true);
     setSettingsSaved(false);
+    setSettingsError(null);
     try {
       const res = await fetch('/api/admin/settings', {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(settings),
       });
-      if (res.ok) {
-        setSettingsSaved(true);
-        setTimeout(() => setSettingsSaved(false), 3000);
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setSettingsError(data.error ?? 'บันทึกค่าเริ่มต้นไม่สำเร็จ');
+        return;
       }
+      setSettingsSaved(true);
+      setTimeout(() => setSettingsSaved(false), 3000);
     } finally {
       setSavingSettings(false);
     }
@@ -801,6 +812,12 @@ export default function AdminDashboardClient({
             {settingsSaved && (
               <span className="text-xs font-medium text-[#93C5FD]">
                 บันทึกแล้ว
+              </span>
+            )}
+
+            {settingsError && (
+              <span className="text-xs font-medium text-red-300">
+                {settingsError}
               </span>
             )}
           </div>

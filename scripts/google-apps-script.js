@@ -8,17 +8,7 @@ const HEADERS = [
   'ต้นทุน',
   'ดาวน์ขั้นต่ำ (สัปดาห์)',
   'ดาวน์ขั้นต่ำ (เดือน)',
-  'ข้อมูลผูกบัญชี',
-  'Game UID',
-  'ช่องทางล็อกอิน',
-  'Garena Username',
-  'Garena Password',
-  'Garena Authenticator',
-  'Gmail',
-  'Gmail Password',
-  'Gmail Authenticator',
-  'รหัสกู้ Gmail (8 หลัก)',
-  'หมายเหตุส่วนตัว',
+  'แท็ก',
   'อัปเดตล่าสุด'
 ];
 
@@ -28,11 +18,26 @@ function getOrCreateSheet() {
   if (!sheet) {
     sheet = ss.insertSheet(SHEET_NAME);
   }
-  if (sheet.getLastRow() === 0) {
+
+  const headerRange = sheet.getLastRow() === 0
+    ? null
+    : sheet.getRange(1, 1, 1, Math.max(sheet.getLastColumn(), HEADERS.length)).getValues()[0];
+
+  const headerMatches =
+    headerRange !== null &&
+    headerRange.length === HEADERS.length &&
+    HEADERS.every(function (value, index) {
+      return String(headerRange[index]).trim() === value;
+    });
+
+  if (!headerMatches) {
+    // ล้างคอลัมน์ credential ที่ค้างจากสคริปต์เวอร์ชันเก่า แล้วสร้างหัวตารางใหม่
+    sheet.clearContents();
     sheet.appendRow(HEADERS);
     sheet.getRange(1, 1, 1, HEADERS.length).setFontWeight('bold');
     sheet.setFrozenRows(1);
   }
+
   return sheet;
 }
 
@@ -45,16 +50,6 @@ function formatAccountRow(acc) {
     Number(acc.min_down_weekly || 0),
     Number(acc.min_down_monthly || 0),
     Array.isArray(acc.tags) ? acc.tags.join(', ') : (acc.tags || ''),
-    acc.game_uid || '',
-    acc.login_provider || '',
-    acc.username || '',
-    acc.password || '',
-    acc.authenticator || '',
-    acc.gmail || '',
-    acc.gmail_password || '',
-    acc.gmail_authenticator || '',
-    acc.gmail_recovery || '',
-    acc.private_notes || '',
     acc.updated_at || new Date().toISOString()
   ];
 }

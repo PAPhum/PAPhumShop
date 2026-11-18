@@ -1,13 +1,12 @@
-import { NextRequest, NextResponse } from 'next/server';
-import { cookies } from 'next/headers';
-import { createSupabaseServerClient } from '@/lib/supabase/server';
-import { encryptSecret, decryptSecret } from '@/lib/crypto';
+import { NextRequest } from 'next/server';
+import { encryptSecret } from '@/lib/crypto';
 import {
   syncAccountToSheets,
   syncAllAccountsToSheets,
   SheetAccountPayload,
 } from '@/lib/sheets-sync';
 import { AccountStatus } from '@/types/database';
+import { jsonNoStore, requireAdmin } from '@/lib/auth/guard';
 
 const VALID_STATUSES: AccountStatus[] = [
   'Unavailable',
@@ -15,24 +14,6 @@ const VALID_STATUSES: AccountStatus[] = [
   'Installment',
   'SoldOut',
 ];
-
-async function requireOwner(
-  supabase: Awaited<ReturnType<typeof createSupabaseServerClient>>,
-  userId: string
-): Promise<boolean> {
-  const { data } = await supabase
-    .from('admin_roles')
-    .select('role')
-    .eq('user_id', userId)
-    .maybeSingle();
-
-  return data?.role === 'owner';
-}
-
-async function isPinUnlocked(userId: string): Promise<boolean> {
-  const cookieStore = await cookies();
-  return cookieStore.get('paphum_admin_pin_ok')?.value === userId;
-}
 
 function packPrivateNotes(params: {
   purchaseDate?: string;
@@ -52,7 +33,7 @@ function packPrivateNotes(params: {
   return parts.join(' ');
 }
 
-function buildDecryptedSheetPayload(row: Record<string, unknown>): SheetAccountPayload {
+function buildSheetPayload(row: Record<string, unknown>): SheetAccountPayload {
   return {
     code: String(row.code ?? ''),
     status: String(row.status ?? 'Unavailable'),
@@ -61,50 +42,16 @@ function buildDecryptedSheetPayload(row: Record<string, unknown>): SheetAccountP
     min_down_weekly: Number(row.min_down_weekly ?? 0),
     min_down_monthly: Number(row.min_down_monthly ?? 0),
     tags: Array.isArray(row.tags) ? (row.tags as string[]) : [],
-    game_uid: row.game_uid_enc ? decryptSecret(String(row.game_uid_enc)) : '',
-    login_provider: row.login_provider_enc
-      ? decryptSecret(String(row.login_provider_enc))
-      : 'Garena',
-    username: row.username_enc ? decryptSecret(String(row.username_enc)) : '',
-    password: row.password_enc ? decryptSecret(String(row.password_enc)) : '',
-    authenticator: row.authenticator_enc
-      ? decryptSecret(String(row.authenticator_enc))
-      : '',
-    gmail: row.gmail_enc ? decryptSecret(String(row.gmail_enc)) : '',
-    gmail_password: row.gmail_password_enc
-      ? decryptSecret(String(row.gmail_password_enc))
-      : '',
-    gmail_authenticator: row.gmail_authenticator_enc
-      ? decryptSecret(String(row.gmail_authenticator_enc))
-      : '',
-    gmail_recovery: row.gmail_recovery_enc
-      ? decryptSecret(String(row.gmail_recovery_enc))
-      : '',
-    private_notes: row.private_notes_enc
-      ? decryptSecret(String(row.private_notes_enc))
-      : '',
     updated_at: String(row.updated_at ?? new Date().toISOString()),
   };
 }
 
 export async function GET() {
   try {
-    const supabase = await createSupabaseServerClient();
-    const {
-      data: { user },
-    } = await supabase.auth.getUser();
+    const auth = await requireAdmin({ ownerOnly: true });
+    if (!auth.ok) return auth.response;
 
-    if (!user) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-    }
-
-    const owner = await requireOwner(supabase, user.id);
-    if (!owner) {
-      return NextResponse.json(
-        { error: 'ไม่มีสิทธิ์เข้าถึงข้อมูลไอดี (เฉพาะ Owner)' },
-        { status: 403 }
-      );
-    }
+    const { supabase } = auth.ctx;
 
     const { data, error } = await supabase
       .from('accounts_public')
@@ -112,12 +59,12 @@ export async function GET() {
       .order('created_at', { ascending: false });
 
     if (error) {
-      return NextResponse.json({ error: error.message }, { status: 500 });
+      return jsonNoStore({ error: error.message }, { status: 500 });
     }
 
-    return NextResponse.json({ accounts: data ?? [] });
+    return jsonNoStore({ accounts: data ?? [] });
   } catch (err) {
-    return NextResponse.json(
+    return jsonNoStore(
       { error: err instanceof Error ? err.message : 'เกิดข้อผิดพลาดฝั่งเซิร์ฟเวอร์' },
       { status: 500 }
     );
@@ -126,30 +73,10 @@ export async function GET() {
 
 export async function POST(req: NextRequest) {
   try {
-    const supabase = await createSupabaseServerClient();
-    const {
-      data: { user },
-    } = await supabase.auth.getUser();
+    const auth = await requireAdmin({ ownerOnly: true, pin: true });
+    if (!auth.ok) return auth.response;
 
-    if (!user) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-    }
-
-    const owner = await requireOwner(supabase, user.id);
-    if (!owner) {
-      return NextResponse.json(
-        { error: 'ไม่มีสิทธิ์จัดการข้อมูลไอดี (เฉพาะ Owner)' },
-        { status: 403 }
-      );
-    }
-
-    const unlocked = await isPinUnlocked(user.id);
-    if (!unlocked) {
-      return NextResponse.json(
-        { error: 'กรุณาปลดล็อก PIN 6 หลักก่อนทำรายการ' },
-        { status: 403 }
-      );
-    }
+    const { supabase } = auth.ctx;
 
     const body = await req.json();
 
@@ -161,26 +88,26 @@ export async function POST(req: NextRequest) {
         .order('code', { ascending: true });
 
       if (error) {
-        return NextResponse.json({ ok: false, error: error.message }, { status: 500 });
+        return jsonNoStore({ ok: false, error: error.message }, { status: 500 });
       }
 
-      const payloads = (rows ?? []).map((row) => buildDecryptedSheetPayload(row));
+      const payloads = (rows ?? []).map((row) => buildSheetPayload(row));
       const syncResult = await syncAllAccountsToSheets(payloads);
 
       if (!syncResult.ok) {
-        return NextResponse.json(
+        return jsonNoStore(
           { ok: false, error: syncResult.error ?? 'Sync Sheet ไม่สำเร็จ' },
           { status: 502 }
         );
       }
 
-      return NextResponse.json({ ok: true, count: payloads.length });
+      return jsonNoStore({ ok: true, count: payloads.length });
     }
 
     // กรณีสร้างไอดีใหม่
     const code = String(body.code ?? '').trim();
     if (!code) {
-      return NextResponse.json({ error: 'กรุณาระบุรหัสไอดี' }, { status: 400 });
+      return jsonNoStore({ error: 'กรุณาระบุรหัสไอดี' }, { status: 400 });
     }
 
     const status: AccountStatus = VALID_STATUSES.includes(body.status)
@@ -244,15 +171,12 @@ export async function POST(req: NextRequest) {
       .single();
 
     if (insertError) {
-      return NextResponse.json({ error: insertError.message }, { status: 400 });
+      return jsonNoStore({ error: insertError.message }, { status: 400 });
     }
 
     let sheetWarning: string | undefined;
     try {
-      const syncRes = await syncAccountToSheets(
-        'upsert',
-        buildDecryptedSheetPayload(created)
-      );
+      const syncRes = await syncAccountToSheets('upsert', buildSheetPayload(created));
       if (!syncRes.ok) {
         sheetWarning = syncRes.error;
       }
@@ -260,13 +184,13 @@ export async function POST(req: NextRequest) {
       sheetWarning = err instanceof Error ? err.message : 'Sheets sync error';
     }
 
-    return NextResponse.json({
+    return jsonNoStore({
       ok: true,
       id: created.id,
       sheetWarning,
     });
   } catch (err) {
-    return NextResponse.json(
+    return jsonNoStore(
       { error: err instanceof Error ? err.message : 'เกิดข้อผิดพลาดระหว่างบันทึกไอดี' },
       { status: 500 }
     );

@@ -10,6 +10,11 @@ import {
 } from '@/types/database';
 import AdminLoginForm from '@/components/admin/AdminLoginForm';
 import AdminDashboardClient from '@/components/admin/AdminDashboardClient';
+import {
+  PIN_COOKIE_NAME,
+  pinVersionFromSalt,
+  verifyPinToken,
+} from '@/lib/pin-token';
 
 async function AdminLoader() {
   await connection();
@@ -72,14 +77,26 @@ async function AdminLoader() {
     supabase.from('installment_settings').select('*').eq('id', 1).single(),
     supabase
       .from('admin_security')
-      .select('user_id')
+      .select('user_id, pin_salt')
       .eq('user_id', user.id)
       .maybeSingle(),
   ]);
 
   const cookieStore = await cookies();
-  const initialPinUnlocked =
-    cookieStore.get('paphum_admin_pin_ok')?.value === user.id;
+  const pinToken = cookieStore.get(PIN_COOKIE_NAME)?.value;
+  let initialPinUnlocked = false;
+
+  if (pinRes.data?.pin_salt) {
+    try {
+      initialPinUnlocked = verifyPinToken(
+        pinToken,
+        user.id,
+        pinVersionFromSalt(String(pinRes.data.pin_salt))
+      );
+    } catch {
+      initialPinUnlocked = false;
+    }
+  }
 
   return (
     <AdminDashboardClient

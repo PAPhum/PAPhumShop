@@ -52,6 +52,10 @@ export function createR2Client(config: R2Config): S3Client {
       accessKeyId: config.accessKeyId,
       secretAccessKey: config.secretAccessKey,
     },
+    // ปิดการคำนวณ checksum อัตโนมัติ เพราะ presigned PUT จะฝัง checksum ของ body ว่าง
+    // ทำให้เบราว์เซอร์อัปโหลดไฟล์จริงแล้ว signature ไม่ตรง
+    requestChecksumCalculation: 'WHEN_REQUIRED',
+    responseChecksumValidation: 'WHEN_REQUIRED',
   });
 }
 

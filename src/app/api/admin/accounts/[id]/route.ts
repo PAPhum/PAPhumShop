@@ -1,9 +1,8 @@
-import { NextRequest, NextResponse } from 'next/server';
-import { cookies } from 'next/headers';
-import { createSupabaseServerClient } from '@/lib/supabase/server';
+import { NextRequest } from 'next/server';
 import { encryptSecret, decryptSecret } from '@/lib/crypto';
 import { syncAccountToSheets, SheetAccountPayload } from '@/lib/sheets-sync';
 import { AccountSecretDecrypted, AccountStatus } from '@/types/database';
+import { isPinUnlocked, jsonNoStore, requireAdmin } from '@/lib/auth/guard';
 
 const VALID_STATUSES: AccountStatus[] = [
   'Unavailable',
@@ -12,22 +11,17 @@ const VALID_STATUSES: AccountStatus[] = [
   'SoldOut',
 ];
 
-async function requireOwner(
-  supabase: Awaited<ReturnType<typeof createSupabaseServerClient>>,
-  userId: string
-): Promise<boolean> {
-  const { data } = await supabase
-    .from('admin_roles')
-    .select('role')
-    .eq('user_id', userId)
-    .maybeSingle();
-
-  return data?.role === 'owner';
-}
-
-async function isPinUnlocked(userId: string): Promise<boolean> {
-  const cookieStore = await cookies();
-  return cookieStore.get('paphum_admin_pin_ok')?.value === userId;
+function buildSheetPayload(row: Record<string, unknown>): SheetAccountPayload {
+  return {
+    code: String(row.code ?? ''),
+    status: String(row.status ?? 'Unavailable'),
+    price: Number(row.price ?? 0),
+    cost: Number(row.cost ?? 0),
+    min_down_weekly: Number(row.min_down_weekly ?? 0),
+    min_down_monthly: Number(row.min_down_monthly ?? 0),
+    tags: Array.isArray(row.tags) ? (row.tags as string[]) : [],
+    updated_at: String(row.updated_at ?? new Date().toISOString()),
+  };
 }
 
 function packPrivateNotes(params: {
@@ -76,8 +70,7 @@ function unpackPrivateNotes(raw: string): {
   };
 }
 
-function decryptAccountRow(row: Record<string, unknown>): AccountSecretDecrypted {
-  const rawNotes = row.private_notes_enc
+function decryptAccountRow(row: Record<string, unknown>): AccountSecretDecrypted {  const rawNotes = row.private_notes_enc
     ? decryptSecret(String(row.private_notes_enc))
     : '';
   const unpacked = unpackPrivateNotes(rawNotes);
@@ -109,64 +102,16 @@ function decryptAccountRow(row: Record<string, unknown>): AccountSecretDecrypted
   };
 }
 
-function buildDecryptedSheetPayload(row: Record<string, unknown>): SheetAccountPayload {
-  const secret = decryptAccountRow(row);
-  const fullNotes = row.private_notes_enc
-    ? decryptSecret(String(row.private_notes_enc))
-    : '';
-
-  return {
-    code: String(row.code ?? ''),
-    status: String(row.status ?? 'Unavailable'),
-    price: Number(row.price ?? 0),
-    cost: secret.cost,
-    min_down_weekly: Number(row.min_down_weekly ?? 0),
-    min_down_monthly: Number(row.min_down_monthly ?? 0),
-    tags: Array.isArray(row.tags) ? (row.tags as string[]) : [],
-    game_uid: secret.game_uid,
-    login_provider: secret.login_provider,
-    username: secret.username,
-    password: secret.password,
-    authenticator: secret.authenticator,
-    gmail: secret.gmail,
-    gmail_password: secret.gmail_password,
-    gmail_authenticator: secret.gmail_authenticator,
-    gmail_recovery: secret.gmail_recovery,
-    private_notes: fullNotes,
-    updated_at: String(row.updated_at ?? new Date().toISOString()),
-  };
-}
-
 export async function GET(
   _req: NextRequest,
   context: { params: Promise<{ id: string }> }
 ) {
   try {
     const { id } = await context.params;
-    const supabase = await createSupabaseServerClient();
-    const {
-      data: { user },
-    } = await supabase.auth.getUser();
+    const auth = await requireAdmin({ ownerOnly: true, pin: true });
+    if (!auth.ok) return auth.response;
 
-    if (!user) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-    }
-
-    const owner = await requireOwner(supabase, user.id);
-    if (!owner) {
-      return NextResponse.json(
-        { error: 'ไม่มีสิทธิ์เข้าถึงข้อมูลลับ (เฉพาะ Owner)' },
-        { status: 403 }
-      );
-    }
-
-    const unlocked = await isPinUnlocked(user.id);
-    if (!unlocked) {
-      return NextResponse.json(
-        { error: 'กรุณาปลดล็อก PIN 6 หลักก่อนดูข้อมูลลับ' },
-        { status: 403 }
-      );
-    }
+    const { supabase } = auth.ctx;
 
     const { data: row, error } = await supabase
       .from('accounts')
@@ -175,13 +120,13 @@ export async function GET(
       .single();
 
     if (error || !row) {
-      return NextResponse.json({ error: 'ไม่พบข้อมูลไอดี' }, { status: 404 });
+      return jsonNoStore({ error: 'ไม่พบข้อมูลไอดี' }, { status: 404 });
     }
 
     const secret = decryptAccountRow(row);
-    return NextResponse.json({ secret });
+    return jsonNoStore({ secret });
   } catch (err) {
-    return NextResponse.json(
+    return jsonNoStore(
       { error: err instanceof Error ? err.message : 'เกิดข้อผิดพลาดฝั่งเซิร์ฟเวอร์' },
       { status: 500 }
     );
@@ -194,22 +139,10 @@ export async function PATCH(
 ) {
   try {
     const { id } = await context.params;
-    const supabase = await createSupabaseServerClient();
-    const {
-      data: { user },
-    } = await supabase.auth.getUser();
+    const auth = await requireAdmin({ ownerOnly: true });
+    if (!auth.ok) return auth.response;
 
-    if (!user) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-    }
-
-    const owner = await requireOwner(supabase, user.id);
-    if (!owner) {
-      return NextResponse.json(
-        { error: 'ไม่มีสิทธิ์แก้ไขข้อมูลไอดี (เฉพาะ Owner)' },
-        { status: 403 }
-      );
-    }
+    const { supabase, user } = auth.ctx;
 
     const body = await req.json();
     const now = new Date().toISOString();
@@ -217,36 +150,39 @@ export async function PATCH(
     // กรณีเปลี่ยนสถานะด่วนบนการ์ด (ไม่ต้องปลดล็อก PIN)
     if (body.quickStatusOnly === true) {
       if (!VALID_STATUSES.includes(body.status)) {
-        return NextResponse.json({ error: 'สถานะไม่ถูกต้อง' }, { status: 400 });
+        return jsonNoStore({ error: 'สถานะไม่ถูกต้อง' }, { status: 400 });
       }
 
       const { data: updated, error } = await supabase
         .from('accounts')
         .update({ status: body.status, updated_at: now })
         .eq('id', id)
-        .select('*')
+        .select('code, status')
         .single();
 
       if (error || !updated) {
-        return NextResponse.json(
+        return jsonNoStore(
           { error: error?.message ?? 'อัปเดตสถานะไม่สำเร็จ' },
           { status: 400 }
         );
       }
 
       try {
-        await syncAccountToSheets('upsert', buildDecryptedSheetPayload(updated));
+        await syncAccountToSheets('upsert', {
+          code: String(updated.code ?? ''),
+          status: String(updated.status ?? 'Unavailable'),
+        });
       } catch {
         // Non-blocking sync
       }
 
-      return NextResponse.json({ ok: true });
+      return jsonNoStore({ ok: true });
     }
 
     // กรณีแก้ไขข้อมูลเต็มรูปแบบ (ต้องปลดล็อก PIN)
-    const unlocked = await isPinUnlocked(user.id);
+    const unlocked = await isPinUnlocked(supabase, user.id);
     if (!unlocked) {
-      return NextResponse.json(
+      return jsonNoStore(
         { error: 'กรุณาปลดล็อก PIN 6 หลักก่อนแก้ไขข้อมูล' },
         { status: 403 }
       );
@@ -254,7 +190,7 @@ export async function PATCH(
 
     const code = String(body.code ?? '').trim();
     if (!code) {
-      return NextResponse.json({ error: 'กรุณาระบุรหัสไอดี' }, { status: 400 });
+      return jsonNoStore({ error: 'กรุณาระบุรหัสไอดี' }, { status: 400 });
     }
 
     const status: AccountStatus = VALID_STATUSES.includes(body.status)
@@ -316,7 +252,7 @@ export async function PATCH(
       .single();
 
     if (updateError || !updated) {
-      return NextResponse.json(
+      return jsonNoStore(
         { error: updateError?.message ?? 'บันทึกข้อมูลไม่สำเร็จ' },
         { status: 400 }
       );
@@ -324,10 +260,7 @@ export async function PATCH(
 
     let sheetWarning: string | undefined;
     try {
-      const syncRes = await syncAccountToSheets(
-        'upsert',
-        buildDecryptedSheetPayload(updated)
-      );
+      const syncRes = await syncAccountToSheets('upsert', buildSheetPayload(updated));
       if (!syncRes.ok) {
         sheetWarning = syncRes.error;
       }
@@ -335,9 +268,9 @@ export async function PATCH(
       sheetWarning = err instanceof Error ? err.message : 'Sheets sync error';
     }
 
-    return NextResponse.json({ ok: true, sheetWarning });
+    return jsonNoStore({ ok: true, sheetWarning });
   } catch (err) {
-    return NextResponse.json(
+    return jsonNoStore(
       { error: err instanceof Error ? err.message : 'เกิดข้อผิดพลาดระหว่างแก้ไขไอดี' },
       { status: 500 }
     );
@@ -350,30 +283,10 @@ export async function DELETE(
 ) {
   try {
     const { id } = await context.params;
-    const supabase = await createSupabaseServerClient();
-    const {
-      data: { user },
-    } = await supabase.auth.getUser();
+    const auth = await requireAdmin({ ownerOnly: true, pin: true });
+    if (!auth.ok) return auth.response;
 
-    if (!user) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-    }
-
-    const owner = await requireOwner(supabase, user.id);
-    if (!owner) {
-      return NextResponse.json(
-        { error: 'ไม่มีสิทธิ์ลบข้อมูลไอดี (เฉพาะ Owner)' },
-        { status: 403 }
-      );
-    }
-
-    const unlocked = await isPinUnlocked(user.id);
-    if (!unlocked) {
-      return NextResponse.json(
-        { error: 'กรุณาปลดล็อก PIN 6 หลักก่อนลบไอดี' },
-        { status: 403 }
-      );
-    }
+    const { supabase } = auth.ctx;
 
     const { data: existing } = await supabase
       .from('accounts')
@@ -387,7 +300,7 @@ export async function DELETE(
       .eq('id', id);
 
     if (deleteError) {
-      return NextResponse.json({ error: deleteError.message }, { status: 400 });
+      return jsonNoStore({ error: deleteError.message }, { status: 400 });
     }
 
     if (existing?.code) {
@@ -398,9 +311,9 @@ export async function DELETE(
       }
     }
 
-    return NextResponse.json({ ok: true });
+    return jsonNoStore({ ok: true });
   } catch (err) {
-    return NextResponse.json(
+    return jsonNoStore(
       { error: err instanceof Error ? err.message : 'เกิดข้อผิดพลาดระหว่างลบไอดี' },
       { status: 500 }
     );

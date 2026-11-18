@@ -1,155 +1,110 @@
-import { NextRequest, NextResponse } from 'next/server';
-import { createHash, createHmac, randomUUID } from 'node:crypto';
-import { createSupabaseServerClient } from '@/lib/supabase/server';
+import { NextRequest } from 'next/server';
+import { PutObjectCommand } from '@aws-sdk/client-s3';
+import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
+import {
+  buildR2ObjectKey,
+  createR2Client,
+  getR2ConfigFromEnv,
+  type R2FolderCategory,
+} from '@/lib/r2';
+import { jsonNoStore, requireAdmin } from '@/lib/auth/guard';
 
-function hmacSha256(key: Buffer | string, data: string): Buffer {
-  return createHmac('sha256', key).update(data, 'utf8').digest();
-}
+const ALLOWED_MIME = new Set(['image/webp', 'image/png', 'image/jpeg']);
+const ALLOWED_EXT = new Set(['webp', 'png', 'jpg', 'jpeg']);
+const ALLOWED_FOLDERS = new Set<R2FolderCategory>([
+  'portfolio',
+  'accounts',
+  'temp-deliveries',
+]);
 
-function sha256Hex(data: string): string {
-  return createHash('sha256').update(data, 'utf8').digest('hex');
-}
+const MAX_IMAGE_BYTES = 10 * 1024 * 1024;
+const MAX_ORIGINAL_BYTES = 20 * 1024 * 1024;
 
-function encodeRfc3986(str: string): string {
-  return encodeURIComponent(str).replace(
-    /[!'()*]/g,
-    (c) => `%${c.charCodeAt(0).toString(16).toUpperCase()}`
-  );
-}
-
-function createR2PresignedPutUrl(params: {
-  accountId: string;
-  accessKeyId: string;
-  secretAccessKey: string;
-  bucketName: string;
-  objectKey: string;
-  expiresInSeconds?: number;
-}): string {
-  const {
-    accountId,
-    accessKeyId,
-    secretAccessKey,
-    bucketName,
-    objectKey,
-    expiresInSeconds = 900,
-  } = params;
-
-  const host = `${accountId}.r2.cloudflarestorage.com`;
-  const region = 'auto';
-  const service = 's3';
-
-  const now = new Date();
-  const amzDate = now.toISOString().replace(/[:-]|\.\d{3}/g, '');
-  const dateStamp = amzDate.slice(0, 8);
-  const credentialScope = `${dateStamp}/${region}/${service}/aws4_request`;
-
-  const encodedKeyPath = objectKey
-    .split('/')
-    .map((segment) => encodeRfc3986(segment))
-    .join('/');
-  const canonicalUri = `/${encodeRfc3986(bucketName)}/${encodedKeyPath}`;
-
-  const queryParams: Record<string, string> = {
-    'X-Amz-Algorithm': 'AWS4-HMAC-SHA256',
-    'X-Amz-Credential': `${accessKeyId}/${credentialScope}`,
-    'X-Amz-Date': amzDate,
-    'X-Amz-Expires': String(expiresInSeconds),
-    'X-Amz-SignedHeaders': 'host',
-  };
-
-  const canonicalQueryString = Object.keys(queryParams)
-    .sort()
-    .map((k) => `${encodeRfc3986(k)}=${encodeRfc3986(queryParams[k])}`)
-    .join('&');
-
-  const canonicalHeaders = `host:${host}\n`;
-  const signedHeaders = 'host';
-  const payloadHash = 'UNSIGNED-PAYLOAD';
-
-  const canonicalRequest = [
-    'PUT',
-    canonicalUri,
-    canonicalQueryString,
-    canonicalHeaders,
-    signedHeaders,
-    payloadHash,
-  ].join('\n');
-
-  const stringToSign = [
-    'AWS4-HMAC-SHA256',
-    amzDate,
-    credentialScope,
-    sha256Hex(canonicalRequest),
-  ].join('\n');
-
-  const kDate = hmacSha256(`AWS4${secretAccessKey}`, dateStamp);
-  const kRegion = hmacSha256(kDate, region);
-  const kService = hmacSha256(kRegion, service);
-  const kSigning = hmacSha256(kService, 'aws4_request');
-  const signature = createHmac('sha256', kSigning)
-    .update(stringToSign, 'utf8')
-    .digest('hex');
-
-  return `https://${host}${canonicalUri}?${canonicalQueryString}&X-Amz-Signature=${signature}`;
-}
+const EXT_MIME: Record<string, string> = {
+  webp: 'image/webp',
+  png: 'image/png',
+  jpg: 'image/jpeg',
+  jpeg: 'image/jpeg',
+};
 
 export async function POST(req: NextRequest) {
-  const supabase = await createSupabaseServerClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
+  const auth = await requireAdmin({ pin: true });
+  if (!auth.ok) return auth.response;
 
-  if (!user) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  const body = await req.json().catch(() => null);
+  if (!body || typeof body !== 'object') {
+    return jsonNoStore({ error: 'ข้อมูลอัปโหลดไม่ถูกต้อง' }, { status: 400 });
   }
 
-  const accountId = process.env.R2_ACCOUNT_ID?.trim();
-  const accessKeyId = process.env.R2_ACCESS_KEY_ID?.trim();
-  const secretAccessKey = process.env.R2_SECRET_ACCESS_KEY?.trim();
-  const bucketName = process.env.R2_BUCKET_NAME?.trim();
-  const publicBaseUrl = (
-    process.env.R2_PUBLIC_URL ||
-    process.env.NEXT_PUBLIC_R2_PUBLIC_URL ||
-    ''
-  )
-    .trim()
-    .replace(/\/+$/, '');
+  const folder = String((body as Record<string, unknown>).folder ?? '') as R2FolderCategory;
+  if (!ALLOWED_FOLDERS.has(folder)) {
+    return jsonNoStore({ error: 'โฟลเดอร์อัปโหลดไม่ถูกต้อง' }, { status: 400 });
+  }
 
-  if (!accountId || !accessKeyId || !secretAccessKey || !bucketName) {
-    return NextResponse.json(
+  const contentType = String(
+    (body as Record<string, unknown>).contentType ?? ''
+  )
+    .toLowerCase()
+    .trim();
+
+  if (!ALLOWED_MIME.has(contentType)) {
+    return jsonNoStore({ error: 'ชนิดไฟล์ไม่รองรับ' }, { status: 400 });
+  }
+
+  const rawFilename = String((body as Record<string, unknown>).filename ?? '').trim();
+  const extMatch = rawFilename.match(/\.([a-zA-Z0-9]+)$/);
+  const ext = extMatch ? extMatch[1].toLowerCase() : '';
+
+  if (!ALLOWED_EXT.has(ext) || EXT_MIME[ext] !== contentType) {
+    return jsonNoStore({ error: 'นามสกุลไฟล์ไม่ตรงกับชนิดไฟล์' }, { status: 400 });
+  }
+
+  const size = Number((body as Record<string, unknown>).size);
+  const maxBytes = folder === 'temp-deliveries' ? MAX_ORIGINAL_BYTES : MAX_IMAGE_BYTES;
+
+  if (!Number.isInteger(size) || size <= 0) {
+    return jsonNoStore({ error: 'ไม่พบขนาดไฟล์' }, { status: 400 });
+  }
+
+  if (size > maxBytes) {
+    return jsonNoStore(
+      { error: `ไฟล์ใหญ่เกินกำหนด (สูงสุด ${Math.round(maxBytes / 1024 / 1024)} MB)` },
+      { status: 400 }
+    );
+  }
+
+  let config;
+  try {
+    config = getR2ConfigFromEnv();
+  } catch {
+    return jsonNoStore(
       {
         error:
-          'ยังไม่ได้ตั้งค่า R2_ACCOUNT_ID / R2_ACCESS_KEY_ID / R2_SECRET_ACCESS_KEY / R2_BUCKET_NAME ใน .env.local',
+          'ยังไม่ได้ตั้งค่า R2_ACCOUNT_ID / R2_ACCESS_KEY_ID / R2_SECRET_ACCESS_KEY / R2_BUCKET_NAME / R2_PUBLIC_URL',
       },
       { status: 500 }
     );
   }
 
-  const body = await req.json();
-  const folder =
-    String(body.folder ?? 'uploads')
-      .replace(/[^a-zA-Z0-9_-]/g, '')
-      .trim() || 'uploads';
-  const rawFilename = String(body.filename ?? 'file.webp');
-  const extMatch = rawFilename.match(/\.([a-zA-Z0-9]+)$/);
-  const ext = extMatch ? extMatch[1].toLowerCase() : 'webp';
+  const key = buildR2ObjectKey(folder, rawFilename);
+  const client = createR2Client(config);
 
-  const key = `${folder}/${Date.now()}-${randomUUID()}.${ext}`;
-  const uploadUrl = createR2PresignedPutUrl({
-    accountId,
-    accessKeyId,
-    secretAccessKey,
-    bucketName,
-    objectKey: key,
+  // ผูก Content-Type และ Content-Length เข้า signature เพื่อไม่ให้ผู้ถือ URL อัปโหลดไฟล์อื่นแทนได้
+  const command = new PutObjectCommand({
+    Bucket: config.bucketName,
+    Key: key,
+    ContentType: contentType,
+    ContentLength: size,
   });
 
-  const publicUrl = publicBaseUrl
-    ? `${publicBaseUrl}/${key}`
-    : `https://${accountId}.r2.cloudflarestorage.com/${bucketName}/${key}`;
+  const uploadUrl = await getSignedUrl(client, command, {
+    expiresIn: 300,
+    signableHeaders: new Set(['content-type', 'content-length']),
+  });
 
-  return NextResponse.json({
+  return jsonNoStore({
     uploadUrl,
-    publicUrl,
+    publicUrl: `${config.publicBaseUrl}/${key}`,
     key,
   });
 }

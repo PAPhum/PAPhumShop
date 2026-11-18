@@ -30,6 +30,7 @@ async function uploadBlobToR2(
       folder,
       filename,
       contentType,
+      size: blob.size,
     }),
   });
 

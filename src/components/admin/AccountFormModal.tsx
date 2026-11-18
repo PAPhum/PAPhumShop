@@ -130,6 +130,7 @@ async function uploadWebPToR2(file: File): Promise<string> {
       folder: 'accounts',
       filename: `${file.name.replace(/\.[^.]+$/, '')}.webp`,
       contentType: 'image/webp',
+      size: webpBlob.size,
     }),
   });
 

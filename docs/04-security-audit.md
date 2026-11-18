@@ -616,3 +616,22 @@ const nextConfig: NextConfig = {
 | 8 | เพิ่ม security headers + `noindex` deliver | `next.config.ts`, `deliver/page.tsx` | 30 นาที |
 
 > หลังแก้ครบ 8 ข้อ ให้รัน `npx vitest run` และทดสอบ manual ตาม Auth Matrix ในข้อ 6 ซ้ำทุกช่อง
+
+---
+
+## 9. สถานะการแก้ไข (อัปเดต 18 พ.ย. 2026)
+
+แก้ฝั่งโค้ดแล้วตามข้อ C-2 (เฉพาะ download), C-3, C-4, H-1, H-2, H-3, H-5, H-6, M-5 และ M-8 — **ยังไม่แตะ schema/RLS บน production**
+
+| ข้อ | สิ่งที่ทำ | ไฟล์ |
+|---|---|---|
+| C-2 | `download` ใช้ service role เลือกเฉพาะ `original_r2_key, original_filename, expires_at` + rate limit ต่อ token/IP + `no-store`; หน้า `/deliver/[token]` อ่านด้วย service role และ `noindex` | `api/deliver/[token]/download/route.ts`, `lib/supabase/admin.ts`, `deliver/[token]/page.tsx` |
+| C-3 | PIN cookie เป็น HMAC token `${userId}.${pinVersion}.${exp}.${hmac}` อายุ 1 ชั่วโมง, `pinVersion = sha256(pin_salt)`, ตรวจด้วย `timingSafeEqual`; เปลี่ยน PIN แล้ว token เก่าใช้ไม่ได้ | `lib/pin-token.ts`, `api/admin/pin/route.ts`, `app/admin/page.tsx`, `lib/auth/guard.ts` |
+| C-4 / H-2 | `SheetAccountPayload` เหลือ 8 ฟิลด์ (ไม่มี credential/notes), `quickStatusOnly` ส่งแค่ `{code,status}`, Apps Script ล้างคอลัมน์ credential เดิมและเขียนหัวตารางใหม่ 8 คอลัมน์ | `lib/sheets-sync.ts`, `api/admin/accounts/**`, `scripts/google-apps-script.js` |
+| H-1 / H-5 | `requireAdmin()` กลาง (session → role → PIN) ใช้กับ banners, banner-categories, presign, accounts; DELETE เป็น owner-only; presign ตรวจ MIME/ext/folder/ขนาด และผูก `content-type;content-length` เข้า signature (ปิด checksum อัตโนมัติของ SDK) | `lib/auth/guard.ts`, `api/admin/banners/route.ts`, `api/admin/banner-categories/route.ts`, `api/admin/upload/presign/route.ts` |
+| H-3 | rate limit PIN 5 ครั้ง/15 นาที ต่อ user+IP และ 20 ครั้ง/15 นาที ต่อ IP ตอบ 429 + `Retry-After` | `lib/rate-limit.ts`, `api/admin/pin/route.ts` |
+| H-6 / M-5 | `POST /api/admin/logout` (signOut + ลบ PIN cookie), `GET/POST/PATCH /api/admin/settings` (owner-only), ปุ่มล็อก PIN ใช้ `POST {action:'lock'}` และ client อัปเดตสถานะหลังล็อก/ออกจากระบบ | `api/admin/logout/route.ts`, `api/admin/settings/route.ts`, `AdminDashboardClient.tsx` |
+| M-8 | security headers (`nosniff`, `DENY`, `Referrer-Policy`, `Permissions-Policy`, `COOP`, `HSTS`) + `no-store` สำหรับ `/api/admin/**` และ `/api/deliver/**` | `next.config.ts` |
+
+**ยังค้าง (ต้องทำบน staging ก่อน production):** drop policy anon ของ `deliveries` 2 ชื่อ (`DB.md:131,133`), drop policy `USING(true)` ที่เหลือ และเพิ่ม `pin_version` ใน `admin_security` ถ้าต้องการเพิกถอน token แบบไม่พึ่ง `pin_salt` — ต้องใช้ migration `003+` เท่านั้น
+

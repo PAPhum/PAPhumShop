@@ -36,13 +36,14 @@ interface BannerCategoryManagerProps {
 
 async function uploadLogoWebP(file: File): Promise<string> {
   const blob = await processImageToWebP(file, { quality: 0.9, maxWidth: 400 });
-  const presignRes = await fetch('/api/upload/presign', {
+  const presignRes = await fetch('/api/admin/upload/presign', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       folder: 'portfolio',
       filename: `logo-${Date.now()}.webp`,
       contentType: 'image/webp',
+      size: blob.size,
     }),
   });
   const presign = await presignRes.json();

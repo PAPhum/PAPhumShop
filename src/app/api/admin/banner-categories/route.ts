@@ -1,5 +1,5 @@
-import { NextRequest, NextResponse } from 'next/server';
-import { createSupabaseServerClient } from '@/lib/supabase/server';
+import { NextRequest } from 'next/server';
+import { jsonNoStore, requireAdmin } from '@/lib/auth/guard';
 
 function makeSlug(name: string): string {
   const base = name
@@ -11,14 +11,10 @@ function makeSlug(name: string): string {
 }
 
 export async function GET() {
-  const supabase = await createSupabaseServerClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
+  const auth = await requireAdmin();
+  if (!auth.ok) return auth.response;
 
-  if (!user) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  }
+  const { supabase } = auth.ctx;
 
   const { data: categories, error } = await supabase
     .from('banner_categories')
@@ -27,7 +23,7 @@ export async function GET() {
     .order('created_at', { ascending: true });
 
   if (error) {
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    return jsonNoStore({ error: error.message }, { status: 500 });
   }
 
   const enriched = await Promise.all(
@@ -52,23 +48,19 @@ export async function GET() {
     })
   );
 
-  return NextResponse.json({ categories: enriched });
+  return jsonNoStore({ categories: enriched });
 }
 
 export async function POST(req: NextRequest) {
-  const supabase = await createSupabaseServerClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
+  const auth = await requireAdmin();
+  if (!auth.ok) return auth.response;
 
-  if (!user) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  }
+  const { supabase } = auth.ctx;
 
   const body = await req.json();
   const name = String(body.name ?? '').trim();
   if (!name) {
-    return NextResponse.json({ error: 'กรุณาระบุชื่อหมวดหมู่' }, { status: 400 });
+    return jsonNoStore({ error: 'กรุณาระบุชื่อหมวดหมู่' }, { status: 400 });
   }
 
   const { data: maxRow } = await supabase
@@ -95,21 +87,17 @@ export async function POST(req: NextRequest) {
     .single();
 
   if (error) {
-    return NextResponse.json({ error: error.message }, { status: 400 });
+    return jsonNoStore({ error: error.message }, { status: 400 });
   }
 
-  return NextResponse.json({ category: created });
+  return jsonNoStore({ category: created });
 }
 
 export async function PATCH(req: NextRequest) {
-  const supabase = await createSupabaseServerClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
+  const auth = await requireAdmin();
+  if (!auth.ok) return auth.response;
 
-  if (!user) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  }
+  const { supabase } = auth.ctx;
 
   const body = await req.json();
 
@@ -123,13 +111,13 @@ export async function PATCH(req: NextRequest) {
           .eq('id', id)
       )
     );
-    return NextResponse.json({ ok: true });
+    return jsonNoStore({ ok: true });
   }
 
   const id = String(body.id ?? '').trim();
   const name = String(body.name ?? '').trim();
   if (!id || !name) {
-    return NextResponse.json({ error: 'ข้อมูลไม่ครบถ้วน' }, { status: 400 });
+    return jsonNoStore({ error: 'ข้อมูลไม่ครบถ้วน' }, { status: 400 });
   }
 
   const updatePayload: Record<string, unknown> = {
@@ -150,26 +138,22 @@ export async function PATCH(req: NextRequest) {
     .single();
 
   if (error) {
-    return NextResponse.json({ error: error.message }, { status: 400 });
+    return jsonNoStore({ error: error.message }, { status: 400 });
   }
 
-  return NextResponse.json({ category: updated });
+  return jsonNoStore({ category: updated });
 }
 
 export async function DELETE(req: NextRequest) {
-  const supabase = await createSupabaseServerClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
+  const auth = await requireAdmin({ ownerOnly: true });
+  if (!auth.ok) return auth.response;
 
-  if (!user) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  }
+  const { supabase } = auth.ctx;
 
   const { searchParams } = new URL(req.url);
   const id = searchParams.get('id');
   if (!id) {
-    return NextResponse.json({ error: 'Missing id' }, { status: 400 });
+    return jsonNoStore({ error: 'Missing id' }, { status: 400 });
   }
 
   const { error } = await supabase
@@ -178,8 +162,8 @@ export async function DELETE(req: NextRequest) {
     .eq('id', id);
 
   if (error) {
-    return NextResponse.json({ error: error.message }, { status: 400 });
+    return jsonNoStore({ error: error.message }, { status: 400 });
   }
 
-  return NextResponse.json({ ok: true });
+  return jsonNoStore({ ok: true });
 }

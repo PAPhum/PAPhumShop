@@ -1,10 +1,28 @@
 import { NextResponse } from 'next/server';
-import { cookies } from 'next/headers';
 import { createSupabaseServerClient } from '@/lib/supabase/server';
 import { hashAdminPin, verifyAdminPin } from '@/lib/crypto';
+import {
+  PIN_COOKIE_NAME,
+  PIN_SESSION_SECONDS,
+  pinVersionFromSalt,
+  signPinToken,
+} from '@/lib/pin-token';
+import { isPinUnlocked, NO_STORE_HEADERS } from '@/lib/auth/guard';
+import { checkRateLimit, getClientIp, resetRateLimit } from '@/lib/rate-limit';
 
-const PIN_COOKIE_NAME = 'paphum_admin_pin_ok';
-const PIN_SESSION_SECONDS = 30 * 24 * 60 * 60; // 30 วัน (1 เดือน)
+const PIN_MAX_ATTEMPTS = 5;
+const PIN_WINDOW_MS = 15 * 60 * 1000;
+const PIN_IP_MAX_ATTEMPTS = 20;
+
+function pinCookieOptions() {
+  return {
+    httpOnly: true,
+    sameSite: 'strict' as const,
+    secure: process.env.NODE_ENV === 'production',
+    maxAge: PIN_SESSION_SECONDS,
+    path: '/',
+  };
+}
 
 export async function GET() {
   const supabase = await createSupabaseServerClient();
@@ -13,7 +31,10 @@ export async function GET() {
   } = await supabase.auth.getUser();
 
   if (!user) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    return NextResponse.json(
+      { error: 'Unauthorized' },
+      { status: 401, headers: NO_STORE_HEADERS }
+    );
   }
 
   const { data: pinRow } = await supabase
@@ -22,13 +43,12 @@ export async function GET() {
     .eq('user_id', user.id)
     .maybeSingle();
 
-  const cookieStore = await cookies();
-  const isUnlocked = cookieStore.get(PIN_COOKIE_NAME)?.value === user.id;
+  const unlocked = await isPinUnlocked(supabase, user.id);
 
-  return NextResponse.json({
-    hasPin: Boolean(pinRow),
-    isUnlocked,
-  });
+  return NextResponse.json(
+    { hasPin: Boolean(pinRow), isUnlocked: unlocked },
+    { headers: NO_STORE_HEADERS }
+  );
 }
 
 export async function POST(request: Request) {
@@ -39,23 +59,53 @@ export async function POST(request: Request) {
     } = await supabase.auth.getUser();
 
     if (!user) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+      return NextResponse.json(
+        { error: 'Unauthorized' },
+        { status: 401, headers: NO_STORE_HEADERS }
+      );
     }
 
-    const body = await request.json();
+    const body = await request.json().catch(() => ({}));
     const action = String(body?.action ?? 'verify');
-    const pin = String(body?.pin ?? '');
 
     if (action === 'lock') {
-      const res = NextResponse.json({ isUnlocked: false });
+      const res = NextResponse.json(
+        { isUnlocked: false },
+        { headers: NO_STORE_HEADERS }
+      );
       res.cookies.delete(PIN_COOKIE_NAME);
       return res;
     }
 
+    const pin = String(body?.pin ?? '');
     if (!/^\d{6}$/.test(pin)) {
       return NextResponse.json(
         { error: 'กรุณากรอกรหัส PIN ตัวเลข 6 หลัก' },
-        { status: 400 }
+        { status: 400, headers: NO_STORE_HEADERS }
+      );
+    }
+
+    const ip = getClientIp(request);
+    const userLimitKey = `pin:user:${user.id}:${ip}`;
+    const ipLimitKey = `pin:ip:${ip}`;
+
+    const userLimit = checkRateLimit(
+      userLimitKey,
+      PIN_MAX_ATTEMPTS,
+      PIN_WINDOW_MS
+    );
+    const ipLimit = checkRateLimit(ipLimitKey, PIN_IP_MAX_ATTEMPTS, PIN_WINDOW_MS);
+
+    if (!userLimit.ok || !ipLimit.ok) {
+      const retryAfter = Math.max(userLimit.retryAfter, ipLimit.retryAfter);
+      return NextResponse.json(
+        {
+          error: `ลองผิดหลายครั้งเกินไป กรุณารอ ${Math.ceil(retryAfter / 60)} นาที`,
+        },
+        {
+          status: 429,
+          headers: { ...NO_STORE_HEADERS, 'Retry-After': String(retryAfter) },
+        }
       );
     }
 
@@ -76,53 +126,92 @@ export async function POST(request: Request) {
         });
 
       if (insertError) {
-        return NextResponse.json({ error: insertError.message }, { status: 500 });
+        return NextResponse.json(
+          { error: insertError.message },
+          { status: 500, headers: NO_STORE_HEADERS }
+        );
       }
 
-      const res = NextResponse.json({ hasPin: true, isUnlocked: true });
-      res.cookies.set(PIN_COOKIE_NAME, user.id, {
-        httpOnly: true,
-        sameSite: 'strict',
-        secure: process.env.NODE_ENV === 'production',
-        maxAge: PIN_SESSION_SECONDS,
-        path: '/',
-      });
+      resetRateLimit(userLimitKey);
+      resetRateLimit(ipLimitKey);
+
+      const res = NextResponse.json(
+        { hasPin: true, isUnlocked: true },
+        { headers: NO_STORE_HEADERS }
+      );
+      res.cookies.set(
+        PIN_COOKIE_NAME,
+        signPinToken(user.id, pinVersionFromSalt(salt)),
+        pinCookieOptions()
+      );
       return res;
     }
 
     const isValid = verifyAdminPin(pin, existingPin.pin_hash, existingPin.pin_salt);
     if (!isValid) {
-      return NextResponse.json({ error: 'รหัส PIN ไม่ถูกต้อง' }, { status: 403 });
+      return NextResponse.json(
+        { error: 'รหัส PIN ไม่ถูกต้อง' },
+        { status: 403, headers: NO_STORE_HEADERS }
+      );
     }
+
+    let pinSalt = String(existingPin.pin_salt);
 
     if (action === 'change') {
       const newPin = String(body?.newPin ?? '');
       if (!/^\d{6}$/.test(newPin)) {
         return NextResponse.json(
           { error: 'รหัส PIN ใหม่ต้องเป็นตัวเลข 6 หลัก' },
-          { status: 400 }
+          { status: 400, headers: NO_STORE_HEADERS }
         );
       }
+
       const { hash, salt } = hashAdminPin(newPin);
-      await supabase
+      const { error: updateError } = await supabase
         .from('admin_security')
-        .update({ pin_hash: hash, pin_salt: salt, updated_at: new Date().toISOString() })
+        .update({
+          pin_hash: hash,
+          pin_salt: salt,
+          updated_at: new Date().toISOString(),
+        })
         .eq('user_id', user.id);
+
+      if (updateError) {
+        return NextResponse.json(
+          { error: updateError.message },
+          { status: 500, headers: NO_STORE_HEADERS }
+        );
+      }
+
+      pinSalt = salt;
     }
 
-    const res = NextResponse.json({ hasPin: true, isUnlocked: true });
-    res.cookies.set(PIN_COOKIE_NAME, user.id, {
-      httpOnly: true,
-      sameSite: 'strict',
-      secure: process.env.NODE_ENV === 'production',
-      maxAge: PIN_SESSION_SECONDS,
-      path: '/',
-    });
+    resetRateLimit(userLimitKey);
+    resetRateLimit(ipLimitKey);
+
+    const res = NextResponse.json(
+      { hasPin: true, isUnlocked: true },
+      { headers: NO_STORE_HEADERS }
+    );
+    res.cookies.set(
+      PIN_COOKIE_NAME,
+      signPinToken(user.id, pinVersionFromSalt(pinSalt)),
+      pinCookieOptions()
+    );
     return res;
   } catch (err) {
     return NextResponse.json(
       { error: err instanceof Error ? err.message : 'เกิดข้อผิดพลาด' },
-      { status: 500 }
+      { status: 500, headers: NO_STORE_HEADERS }
     );
   }
+}
+
+export async function DELETE() {
+  const res = NextResponse.json(
+    { isUnlocked: false },
+    { headers: NO_STORE_HEADERS }
+  );
+  res.cookies.delete(PIN_COOKIE_NAME);
+  return res;
 }
