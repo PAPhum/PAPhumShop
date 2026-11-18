@@ -1,0 +1,142 @@
+const SHEET_NAME = 'PAPhumShop';
+const WEBHOOK_SECRET = 'REPLACE_WITH_YOUR_GOOGLE_SHEETS_WEBHOOK_SECRET';
+
+const HEADERS = [
+  'รหัสไอดี (Code)',
+  'สถานะ (Status)',
+  'ราคา',
+  'ต้นทุน',
+  'ดาวน์ขั้นต่ำ (สัปดาห์)',
+  'ดาวน์ขั้นต่ำ (เดือน)',
+  'ข้อมูลผูกบัญชี',
+  'Game UID',
+  'ช่องทางล็อกอิน',
+  'Garena Username',
+  'Garena Password',
+  'Garena Authenticator',
+  'Gmail',
+  'Gmail Password',
+  'Gmail Authenticator',
+  'รหัสกู้ Gmail (8 หลัก)',
+  'หมายเหตุส่วนตัว',
+  'อัปเดตล่าสุด'
+];
+
+function getOrCreateSheet() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  let sheet = ss.getSheetByName(SHEET_NAME);
+  if (!sheet) {
+    sheet = ss.insertSheet(SHEET_NAME);
+  }
+  if (sheet.getLastRow() === 0) {
+    sheet.appendRow(HEADERS);
+    sheet.getRange(1, 1, 1, HEADERS.length).setFontWeight('bold');
+    sheet.setFrozenRows(1);
+  }
+  return sheet;
+}
+
+function formatAccountRow(acc) {
+  return [
+    acc.code || '',
+    acc.status || '',
+    Number(acc.price || 0),
+    Number(acc.cost || 0),
+    Number(acc.min_down_weekly || 0),
+    Number(acc.min_down_monthly || 0),
+    Array.isArray(acc.tags) ? acc.tags.join(', ') : (acc.tags || ''),
+    acc.game_uid || '',
+    acc.login_provider || '',
+    acc.username || '',
+    acc.password || '',
+    acc.authenticator || '',
+    acc.gmail || '',
+    acc.gmail_password || '',
+    acc.gmail_authenticator || '',
+    acc.gmail_recovery || '',
+    acc.private_notes || '',
+    acc.updated_at || new Date().toISOString()
+  ];
+}
+
+function doPost(e) {
+  try {
+    const body = JSON.parse(e.postData.contents);
+    if (!body || body.secret !== WEBHOOK_SECRET) {
+      return ContentService.createTextOutput(
+        JSON.stringify({ ok: false, error: 'Unauthorized' })
+      ).setMimeType(ContentService.MimeType.JSON);
+    }
+
+    const sheet = getOrCreateSheet();
+    const action = body.action;
+
+    if (action === 'sync_all' && Array.isArray(body.accounts)) {
+      sheet.clearContents();
+      sheet.appendRow(HEADERS);
+      sheet.getRange(1, 1, 1, HEADERS.length).setFontWeight('bold');
+      sheet.setFrozenRows(1);
+
+      if (body.accounts.length > 0) {
+        const rows = body.accounts.map(formatAccountRow);
+        sheet.getRange(2, 1, rows.length, HEADERS.length).setValues(rows);
+      }
+
+      return ContentService.createTextOutput(
+        JSON.stringify({ ok: true, count: body.accounts.length })
+      ).setMimeType(ContentService.MimeType.JSON);
+    }
+
+    if (action === 'upsert' && body.account) {
+      const acc = body.account;
+      const rowValues = formatAccountRow(acc);
+      const lastRow = sheet.getLastRow();
+      let foundRow = -1;
+
+      if (lastRow >= 2) {
+        const codes = sheet.getRange(2, 1, lastRow - 1, 1).getValues();
+        for (let i = 0; i < codes.length; i++) {
+          if (String(codes[i][0]).trim() === String(acc.code).trim()) {
+            foundRow = i + 2;
+            break;
+          }
+        }
+      }
+
+      if (foundRow > 0) {
+        sheet.getRange(foundRow, 1, 1, HEADERS.length).setValues([rowValues]);
+      } else {
+        sheet.appendRow(rowValues);
+      }
+
+      return ContentService.createTextOutput(
+        JSON.stringify({ ok: true, code: acc.code })
+      ).setMimeType(ContentService.MimeType.JSON);
+    }
+
+    if (action === 'delete' && body.account && body.account.code) {
+      const targetCode = String(body.account.code).trim();
+      const lastRow = sheet.getLastRow();
+      if (lastRow >= 2) {
+        const codes = sheet.getRange(2, 1, lastRow - 1, 1).getValues();
+        for (let i = codes.length - 1; i >= 0; i--) {
+          if (String(codes[i][0]).trim() === targetCode) {
+            sheet.deleteRow(i + 2);
+          }
+        }
+      }
+
+      return ContentService.createTextOutput(
+        JSON.stringify({ ok: true, deleted: targetCode })
+      ).setMimeType(ContentService.MimeType.JSON);
+    }
+
+    return ContentService.createTextOutput(
+      JSON.stringify({ ok: false, error: 'Unknown action' })
+    ).setMimeType(ContentService.MimeType.JSON);
+  } catch (err) {
+    return ContentService.createTextOutput(
+      JSON.stringify({ ok: false, error: String(err) })
+    ).setMimeType(ContentService.MimeType.JSON);
+  }
+}

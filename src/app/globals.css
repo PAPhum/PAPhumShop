@@ -1,0 +1,106 @@
+@import "tailwindcss";
+
+@theme inline {
+  --font-sans: var(--font-sans-en), var(--font-sans-th), -apple-system, BlinkMacSystemFont, sans-serif;
+  --font-display: var(--font-sans-en), var(--font-sans-th), sans-serif;
+  --font-mono: var(--font-sans-en), var(--font-sans-th), sans-serif;
+}
+
+@layer base {
+  body {
+    font-family: var(--font-sans-en), var(--font-sans-th), -apple-system, BlinkMacSystemFont, sans-serif;
+    font-feature-settings: "cv02", "cv03", "cv04", "cv11";
+    -webkit-tap-highlight-color: transparent;
+  }
+}
+
+/* ซ่อนแถบ Scrollbar ทั้งเว็บ แต่ยังเลื่อนขึ้น-ลงและซ้าย-ขวาได้ปกติ */
+html,
+body,
+* {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+*::-webkit-scrollbar {
+  display: none;
+  width: 0;
+  height: 0;
+}
+
+/* ลายจุดละเอียดจางๆ บนพื้นหลัง */
+.bg-dot-matrix {
+  background-image: radial-gradient(rgba(255, 255, 255, 0.08) 1px, transparent 1px);
+  background-size: 24px 24px;
+  mask-image: radial-gradient(ellipse 85% 65% at 50% 18%, #000 35%, transparent 100%);
+  -webkit-mask-image: radial-gradient(ellipse 85% 65% at 50% 18%, #000 35%, transparent 100%);
+}
+
+/* การ์ดกระจกฝ้านุ่มลึก พร้อมขอบแสงด้านบน (ลื่นบน iPhone/iPad) */
+.frost-card {
+  background: linear-gradient(
+    180deg,
+    rgba(24, 27, 36, 0.84) 0%,
+    rgba(15, 17, 23, 0.92) 100%
+  );
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-top-color: rgba(255, 255, 255, 0.14);
+  box-shadow: 0 10px 30px -12px rgba(0, 0, 0, 0.65);
+}
+
+.frost-card-interactive {
+  background: linear-gradient(
+    180deg,
+    rgba(24, 27, 36, 0.84) 0%,
+    rgba(15, 17, 23, 0.92) 100%
+  );
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-top-color: rgba(255, 255, 255, 0.15);
+  box-shadow: 0 10px 30px -12px rgba(0, 0, 0, 0.65);
+  transition: transform 220ms cubic-bezier(0.22, 1, 0.36, 1),
+    border-color 220ms ease,
+    box-shadow 220ms ease;
+}
+
+.frost-card-interactive:active {
+  transform: scale(0.985);
+}
+
+@media (hover: hover) {
+  .frost-card-interactive:hover {
+    border-color: rgba(147, 197, 253, 0.32);
+    border-top-color: rgba(147, 197, 253, 0.45);
+    box-shadow: 0 14px 34px -12px rgba(147, 197, 253, 0.14);
+  }
+}
+
+/* แอนิเมชันเปิดหน้าและหน้าต่างป๊อปอัป */
+@keyframes panelIn {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes modalIn {
+  from {
+    opacity: 0;
+    transform: scale(0.97) translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+  }
+}
+
+.animate-panel-in {
+  animation: panelIn 260ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+.animate-modal-in {
+  animation: modalIn 220ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
