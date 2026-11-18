@@ -11,6 +11,8 @@ export interface InstallmentInput {
   mode: InstallmentMode;
   periods: number;
   interestFreePeriods: number;
+  weeklyRate?: number;
+  monthlyRate?: number;
 }
 
 export interface InstallmentResult {
@@ -55,6 +57,8 @@ export interface QuoteFormatInput {
   interestFreePeriods: number;
   minPeriods?: number;
   maxPeriods?: number;
+  weeklyRate?: number;
+  monthlyRate?: number;
 }
 
 /**
@@ -94,7 +98,9 @@ export function calculateInstallmentPlan(input: InstallmentInput): InstallmentRe
 
   const safeFreePeriods = Math.max(0, Math.floor(interestFreePeriods));
   const interestRatePerPeriod =
-    mode === 'weekly' ? WEEKLY_INTEREST_RATE : MONTHLY_INTEREST_RATE;
+    mode === 'weekly'
+      ? (input.weeklyRate ?? WEEKLY_INTEREST_RATE)
+      : (input.monthlyRate ?? MONTHLY_INTEREST_RATE);
 
   const principal = price - downPayment;
   const chargeablePeriods = Math.max(0, periods - safeFreePeriods);
@@ -199,6 +205,7 @@ export function addInstallmentPeriodDate(
 
 /**
  * สร้างตารางวันเปิดสัญญาและนัดชำระทั้งหมดสำหรับฝั่งแอดมิน
+ * งวดสุดท้ายจะรับส่วนต่างจากการปัดเศษ Math.ceil เพื่อไม่ให้ยอดรวมเกินราคาจริง
  */
 export function generatePaymentSchedule(input: ScheduleInput): ScheduleResult {
   const plan = calculateInstallmentPlan(input);
@@ -209,17 +216,27 @@ export function generatePaymentSchedule(input: ScheduleInput): ScheduleResult {
   );
 
   const schedule: ScheduleEntry[] = [];
+  const regularTotal = plan.amountPerPeriod * (plan.periods - 1);
+
   for (let i = 1; i <= plan.periods; i++) {
     const { dateISO, dateLabel } = addInstallmentPeriodDate(
       input.startDateISO,
       plan.mode,
       i
     );
+    const isLastPeriod = i === plan.periods;
+    const amount =
+      plan.remainingTotal === 0
+        ? 0
+        : isLastPeriod
+          ? Math.max(0, plan.remainingTotal - regularTotal)
+          : plan.amountPerPeriod;
+
     schedule.push({
       periodNumber: i,
       dateISO,
       dateLabel,
-      amount: plan.amountPerPeriod,
+      amount,
     });
   }
 
@@ -248,6 +265,8 @@ export function formatCustomerQuoteText(input: QuoteFormatInput): string {
     interestFreePeriods,
     minPeriods,
     maxPeriods = 8,
+    weeklyRate,
+    monthlyRate,
   } = input;
 
   const startPeriod =
@@ -270,6 +289,8 @@ export function formatCustomerQuoteText(input: QuoteFormatInput): string {
       mode,
       periods: p,
       interestFreePeriods,
+      weeklyRate,
+      monthlyRate,
     });
     lines.push(
       `• ผ่อน ${p} ${unitLabel} → งวดละ ${formatNumber(res.amountPerPeriod)}฿`

@@ -635,3 +635,12 @@ const nextConfig: NextConfig = {
 
 **ยังค้าง (ต้องทำบน staging ก่อน production):** drop policy anon ของ `deliveries` 2 ชื่อ (`DB.md:131,133`), drop policy `USING(true)` ที่เหลือ และเพิ่ม `pin_version` ใน `admin_security` ถ้าต้องการเพิกถอน token แบบไม่พึ่ง `pin_salt` — ต้องใช้ migration `003+` เท่านั้น
 
+---
+
+## 10. สถานะการแก้ไขรอบที่ 2 (อัปเดต 18 พ.ย. 2026)
+
+| ข้อ | สิ่งที่ทำ | ไฟล์ |
+|---|---|---|
+| H-3 | ย้ายตัวนับ brute-force PIN จาก in-memory ไปเก็บในตาราง `pin_attempts` ผ่าน service role (คงอยู่ข้าม serverless instance) และคงอายุ PIN cookie 30 วันตามความต้องการใช้งานจริง | `src/lib/pin-attempts.ts`, `src/lib/pin-token.ts`, `src/app/api/admin/pin/route.ts`, `supabase/migrations/003_pin_attempts.sql` |
+| M-3 | ปิดการส่ง `error.message` / `err.message` จาก Postgres และ crypto กลับไปยัง client ในทุก admin route; บันทึกรายละเอียดลง server log พร้อมปิดบังคีย์อ่อนไหว | `src/lib/logger.ts`, `src/lib/api-error.ts`, `src/app/api/admin/**` |
+| L-1 / L-2 | ครอบ `try/catch` ให้ `decodeURIComponent` ใน `/id/[code]` และ `/banners/[slug]` และ escape `%`, `_`, `\` ก่อนส่งเข้า `.ilike()` | `src/app/id/[code]/page.tsx`, `src/app/banners/[slug]/page.tsx`, `src/lib/public-data.ts` |

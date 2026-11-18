@@ -46,8 +46,10 @@ async function uploadLogoWebP(file: File): Promise<string> {
       size: blob.size,
     }),
   });
-  const presign = await presignRes.json();
-  if (!presignRes.ok) throw new Error(presign.error ?? 'ขอสิทธิ์อัปโหลดโลโก้ไม่สำเร็จ');
+  const presign = await presignRes.json().catch(() => ({}));
+  if (!presignRes.ok || !presign.uploadUrl) {
+    throw new Error(presign.error ?? 'ขอสิทธิ์อัปโหลดโลโก้ไม่สำเร็จ');
+  }
 
   const putRes = await fetch(presign.uploadUrl, {
     method: 'PUT',

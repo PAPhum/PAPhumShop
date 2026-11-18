@@ -1,8 +1,10 @@
 import { NextRequest } from 'next/server';
+import { revalidateTag } from 'next/cache';
 import { encryptSecret, decryptSecret } from '@/lib/crypto';
 import { syncAccountToSheets, SheetAccountPayload } from '@/lib/sheets-sync';
 import { AccountSecretDecrypted, AccountStatus } from '@/types/database';
 import { isPinUnlocked, jsonNoStore, requireAdmin } from '@/lib/auth/guard';
+import { dbErrorResponse, serverErrorResponse } from '@/lib/api-error';
 
 const VALID_STATUSES: AccountStatus[] = [
   'Unavailable',
@@ -70,7 +72,8 @@ function unpackPrivateNotes(raw: string): {
   };
 }
 
-function decryptAccountRow(row: Record<string, unknown>): AccountSecretDecrypted {  const rawNotes = row.private_notes_enc
+function decryptAccountRow(row: Record<string, unknown>): AccountSecretDecrypted {
+  const rawNotes = row.private_notes_enc
     ? decryptSecret(String(row.private_notes_enc))
     : '';
   const unpacked = unpackPrivateNotes(rawNotes);
@@ -126,10 +129,7 @@ export async function GET(
     const secret = decryptAccountRow(row);
     return jsonNoStore({ secret });
   } catch (err) {
-    return jsonNoStore(
-      { error: err instanceof Error ? err.message : 'เกิดข้อผิดพลาดฝั่งเซิร์ฟเวอร์' },
-      { status: 500 }
-    );
+    return serverErrorResponse('accounts.id.get', err);
   }
 }
 
@@ -147,10 +147,19 @@ export async function PATCH(
     const body = await req.json();
     const now = new Date().toISOString();
 
-    // กรณีเปลี่ยนสถานะด่วนบนการ์ด (ไม่ต้องปลดล็อก PIN)
+    // กรณีเปลี่ยนสถานะด่วนบนการ์ด (บังคับ PIN เฉพาะสถานะ Installment / SoldOut)
     if (body.quickStatusOnly === true) {
       if (!VALID_STATUSES.includes(body.status)) {
         return jsonNoStore({ error: 'สถานะไม่ถูกต้อง' }, { status: 400 });
+      }
+
+      const needsPin =
+        body.status === 'Installment' || body.status === 'SoldOut';
+      if (needsPin && !(await isPinUnlocked(supabase, user.id))) {
+        return jsonNoStore(
+          { error: 'กรุณาปลดล็อก PIN 6 หลักก่อนเปลี่ยนสถานะนี้' },
+          { status: 403 }
+        );
       }
 
       const { data: updated, error } = await supabase
@@ -161,9 +170,10 @@ export async function PATCH(
         .single();
 
       if (error || !updated) {
-        return jsonNoStore(
-          { error: error?.message ?? 'อัปเดตสถานะไม่สำเร็จ' },
-          { status: 400 }
+        return dbErrorResponse(
+          'accounts.id.quick_status',
+          error ?? new Error('อัปเดตสถานะไม่สำเร็จ'),
+          400
         );
       }
 
@@ -176,6 +186,7 @@ export async function PATCH(
         // Non-blocking sync
       }
 
+      revalidateTag('accounts', { expire: 0 });
       return jsonNoStore({ ok: true });
     }
 
@@ -198,9 +209,6 @@ export async function PATCH(
       : 'Unavailable';
 
     const priceNum = Number(body.price) || 0;
-    const isMonthlyPlan = priceNum > 5000;
-    const freeWeeks = isMonthlyPlan ? 0 : 2;
-    const freeMonths = isMonthlyPlan ? 1 : 0;
 
     const combinedNotes = packPrivateNotes({
       purchaseDate: body.purchase_date,
@@ -213,10 +221,19 @@ export async function PATCH(
       status,
       price: priceNum,
       cost: Number(body.cost) || 0,
-      min_down_weekly: Number(body.min_down_weekly) || 0,
-      min_down_monthly: Number(body.min_down_monthly) || 0,
-      interest_free_weeks: freeWeeks,
-      interest_free_months: freeMonths,
+      min_down_weekly: Math.max(0, Math.trunc(Number(body.min_down_weekly) || 0)),
+      min_down_monthly: Math.max(
+        0,
+        Math.trunc(Number(body.min_down_monthly) || 0)
+      ),
+      interest_free_weeks: Math.max(
+        0,
+        Math.trunc(Number(body.interest_free_weeks) || 0)
+      ),
+      interest_free_months: Math.max(
+        0,
+        Math.trunc(Number(body.interest_free_months) || 0)
+      ),
       tags: Array.isArray(body.tags) ? body.tags : [],
       description: body.description ? String(body.description) : null,
       main_image_url: body.main_image_url ? String(body.main_image_url) : null,
@@ -252,9 +269,10 @@ export async function PATCH(
       .single();
 
     if (updateError || !updated) {
-      return jsonNoStore(
-        { error: updateError?.message ?? 'บันทึกข้อมูลไม่สำเร็จ' },
-        { status: 400 }
+      return dbErrorResponse(
+        'accounts.id.update',
+        updateError ?? new Error('บันทึกข้อมูลไม่สำเร็จ'),
+        400
       );
     }
 
@@ -264,16 +282,14 @@ export async function PATCH(
       if (!syncRes.ok) {
         sheetWarning = syncRes.error;
       }
-    } catch (err) {
-      sheetWarning = err instanceof Error ? err.message : 'Sheets sync error';
+    } catch {
+      sheetWarning = 'Sheets sync error';
     }
 
+    revalidateTag('accounts', { expire: 0 });
     return jsonNoStore({ ok: true, sheetWarning });
   } catch (err) {
-    return jsonNoStore(
-      { error: err instanceof Error ? err.message : 'เกิดข้อผิดพลาดระหว่างแก้ไขไอดี' },
-      { status: 500 }
-    );
+    return serverErrorResponse('accounts.id.patch', err);
   }
 }
 
@@ -300,7 +316,7 @@ export async function DELETE(
       .eq('id', id);
 
     if (deleteError) {
-      return jsonNoStore({ error: deleteError.message }, { status: 400 });
+      return dbErrorResponse('accounts.id.delete', deleteError, 400);
     }
 
     if (existing?.code) {
@@ -311,11 +327,9 @@ export async function DELETE(
       }
     }
 
+    revalidateTag('accounts', { expire: 0 });
     return jsonNoStore({ ok: true });
   } catch (err) {
-    return jsonNoStore(
-      { error: err instanceof Error ? err.message : 'เกิดข้อผิดพลาดระหว่างลบไอดี' },
-      { status: 500 }
-    );
+    return serverErrorResponse('accounts.id.delete', err);
   }
 }

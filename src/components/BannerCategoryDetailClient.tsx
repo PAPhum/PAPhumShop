@@ -2,8 +2,10 @@
 
 import { useState, useEffect } from 'react';
 import Link from 'next/link';
+import Image from 'next/image';
 import { ArrowLeft, ChevronLeft, ChevronRight, ArrowUp } from 'lucide-react';
 import { BannerCategory, BannerItem } from '@/types/database';
+import { isOptimizableImageUrl } from '@/lib/image-url';
 import ImageLightbox from './ImageLightbox';
 import ModalPortal from './ModalPortal';
 
@@ -45,13 +47,22 @@ export default function BannerCategoryDetailClient({
             <span>กลับ</span>
           </Link>
 
-          {category.logo_url && (
-            <img
-              src={category.logo_url}
-              alt={category.name}
-              className="h-10 w-10 rounded-xl border border-white/[0.12] bg-[#0D0F14] object-cover"
-            />
-          )}
+          {category.logo_url &&
+            (isOptimizableImageUrl(category.logo_url) ? (
+              <Image
+                src={category.logo_url}
+                alt={category.name}
+                width={40}
+                height={40}
+                className="h-10 w-10 rounded-xl border border-white/[0.12] bg-[#0D0F14] object-cover"
+              />
+            ) : (
+              <img
+                src={category.logo_url}
+                alt={category.name}
+                className="h-10 w-10 rounded-xl border border-white/[0.12] bg-[#0D0F14] object-cover"
+              />
+            ))}
 
           <div>
             <h1 className="text-base font-bold text-[#F1F5F9] sm:text-lg">
@@ -69,26 +80,40 @@ export default function BannerCategoryDetailClient({
       </div>
 
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4">
-        {banners.map((banner, idx) => (
-          <button
-            key={banner.id}
-            type="button"
-            onClick={() => setLightboxIndex(idx)}
-            className="frost-card-interactive group relative aspect-[3/4] overflow-hidden rounded-2xl text-left"
-          >
-            <img
-              src={banner.watermarked_url}
-              alt={banner.code ?? category.name}
-              loading="lazy"
-              className="h-full w-full object-cover transition-transform duration-500 ease-[cubic-bezier(0.22,1,0.36,1)] group-hover:scale-[1.03]"
-            />
-            {banner.code && (
-              <span className="absolute bottom-2.5 left-2.5 rounded-lg border border-white/15 bg-[#090B10]/85 px-2 py-0.5 text-[11px] font-semibold tabular-nums text-zinc-200">
-                {banner.code}
-              </span>
-            )}
-          </button>
-        ))}
+        {banners.map((banner, idx) => {
+          const canOptimize = isOptimizableImageUrl(banner.watermarked_url);
+          return (
+            <button
+              key={banner.id}
+              type="button"
+              onClick={() => setLightboxIndex(idx)}
+              className="frost-card-interactive group relative aspect-[3/4] overflow-hidden rounded-2xl text-left"
+            >
+              {canOptimize ? (
+                <Image
+                  src={banner.watermarked_url}
+                  alt={banner.code ?? category.name}
+                  fill
+                  priority={idx < 4}
+                  sizes="(max-width: 640px) 50vw, (max-width: 768px) 33vw, 25vw"
+                  className="object-cover transition-transform duration-500 ease-[cubic-bezier(0.22,1,0.36,1)] group-hover:scale-[1.03]"
+                />
+              ) : (
+                <img
+                  src={banner.watermarked_url}
+                  alt={banner.code ?? category.name}
+                  loading="lazy"
+                  className="h-full w-full object-cover transition-transform duration-500 ease-[cubic-bezier(0.22,1,0.36,1)] group-hover:scale-[1.03]"
+                />
+              )}
+              {banner.code && (
+                <span className="absolute bottom-2.5 left-2.5 rounded-lg border border-white/15 bg-[#090B10]/85 px-2 py-0.5 text-[11px] font-semibold tabular-nums text-zinc-200">
+                  {banner.code}
+                </span>
+              )}
+            </button>
+          );
+        })}
       </div>
 
       {totalPages > 1 && (

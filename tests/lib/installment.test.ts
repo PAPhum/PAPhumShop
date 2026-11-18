@@ -203,3 +203,22 @@ describe('Copy-Paste Message Templates', () => {
     );
   });
 });
+
+describe('Custom Interest Rate Override', () => {
+  it('ใช้ weeklyRate ที่ส่งเข้ามาแทนค่าคงที่', () => {
+    const result = calculateInstallmentPlan({
+      price: 3290, downPayment: 1000, minDownPayment: 1000,
+      mode: 'weekly', periods: 4, interestFreePeriods: 2, weeklyRate: 200,
+    });
+    expect(result.interestRatePerPeriod).toBe(200);
+    expect(result.totalInterest).toBe(200 * 2);
+  });
+
+  it('ไม่ส่ง rate แล้วยังใช้ค่าเดิม 140/600', () => {
+    const result = calculateInstallmentPlan({
+      price: 3290, downPayment: 1000, minDownPayment: 1000,
+      mode: 'weekly', periods: 4, interestFreePeriods: 2,
+    });
+    expect(result.interestRatePerPeriod).toBe(140);
+  });
+});

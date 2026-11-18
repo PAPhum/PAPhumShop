@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import Link from 'next/link';
+import Image from 'next/image';
 import {
   ChevronRight,
   Snowflake,
@@ -10,6 +11,7 @@ import {
   ArrowUp,
 } from 'lucide-react';
 import { BannerCategorySection, BannerItem } from '@/types/database';
+import { isOptimizableImageUrl } from '@/lib/image-url';
 import ImageLightbox from './ImageLightbox';
 import BannerCoverflowCarousel from './BannerCoverflowCarousel';
 import ModalPortal from './ModalPortal';
@@ -98,13 +100,22 @@ export default function BannerPortfolioClient({
                 className="h-7 w-1 shrink-0 rounded-full bg-gradient-to-b from-[#93C5FD] to-[#38BDF8]"
               />
 
-              {section.logo_url && (
-                <img
-                  src={section.logo_url}
-                  alt={section.name}
-                  className="h-9 w-9 shrink-0 rounded-xl border border-white/[0.12] bg-[#12141C] object-cover shadow-sm"
-                />
-              )}
+              {section.logo_url &&
+                (isOptimizableImageUrl(section.logo_url) ? (
+                  <Image
+                    src={section.logo_url}
+                    alt={section.name}
+                    width={36}
+                    height={36}
+                    className="h-9 w-9 shrink-0 rounded-xl border border-white/[0.12] bg-[#12141C] object-cover shadow-sm"
+                  />
+                ) : (
+                  <img
+                    src={section.logo_url}
+                    alt={section.name}
+                    className="h-9 w-9 shrink-0 rounded-xl border border-white/[0.12] bg-[#12141C] object-cover shadow-sm"
+                  />
+                ))}
 
               <div className="min-w-0">
                 <h2 className="truncate text-base font-bold tracking-tight text-[#F1F5F9] sm:text-lg">

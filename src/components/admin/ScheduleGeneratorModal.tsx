@@ -8,6 +8,7 @@ import {
   MONTHLY_INTEREST_RATE,
   generatePaymentSchedule,
   formatAdminScheduleText,
+  getDefaultInstallmentMode,
 } from '@/lib/installment';
 
 interface ScheduleGeneratorModalProps {
@@ -19,6 +20,8 @@ interface ScheduleGeneratorModalProps {
   initialDownMonthly?: number;
   initialFreeWeeks?: number;
   initialFreeMonths?: number;
+  weeklyRate?: number;
+  monthlyRate?: number;
 }
 
 export default function ScheduleGeneratorModal({
@@ -30,19 +33,23 @@ export default function ScheduleGeneratorModal({
   initialDownMonthly = 2000,
   initialFreeWeeks = 2,
   initialFreeMonths = 1,
+  weeklyRate = WEEKLY_INTEREST_RATE,
+  monthlyRate = MONTHLY_INTEREST_RATE,
 }: ScheduleGeneratorModalProps) {
   const todayISO = new Date().toISOString().slice(0, 10);
 
   const [mode, setMode] = useState<InstallmentMode>(
-    initialPrice >= 6000 ? 'monthly' : 'weekly'
+    getDefaultInstallmentMode(initialPrice)
   );
+  const initialIsMonthly =
+    getDefaultInstallmentMode(initialPrice) === 'monthly';
   const [code, setCode] = useState(initialCode);
   const [price, setPrice] = useState(String(initialPrice));
   const [downPayment, setDownPayment] = useState(
-    String(initialPrice >= 6000 ? initialDownMonthly : initialDownWeekly)
+    String(initialIsMonthly ? initialDownMonthly : initialDownWeekly)
   );
   const [freePeriods, setFreePeriods] = useState(
-    String(initialPrice >= 6000 ? initialFreeMonths : initialFreeWeeks)
+    String(initialIsMonthly ? initialFreeMonths : initialFreeWeeks)
   );
   const [periods, setPeriods] = useState('4');
   const [startDateISO, setStartDateISO] = useState(todayISO);
@@ -68,13 +75,25 @@ export default function ScheduleGeneratorModal({
         mode,
         periods: Math.max(1, Number(periods) || 1),
         interestFreePeriods: Math.max(0, Number(freePeriods) || 0),
+        weeklyRate,
+        monthlyRate,
         startDateISO,
       });
       return formatAdminScheduleText(schedule);
     } catch (err) {
       return err instanceof Error ? err.message : 'ข้อมูลไม่ถูกต้อง';
     }
-  }, [code, price, downPayment, mode, periods, freePeriods, startDateISO]);
+  }, [
+    code,
+    price,
+    downPayment,
+    mode,
+    periods,
+    freePeriods,
+    weeklyRate,
+    monthlyRate,
+    startDateISO,
+  ]);
 
   if (!isOpen) return null;
 
@@ -121,19 +140,23 @@ export default function ScheduleGeneratorModal({
             type="button"
             onClick={() => handleModeSwitch('weekly')}
             className={`relative z-10 rounded-md py-2 text-xs font-semibold transition-colors ${
-              mode === 'weekly' ? 'text-[#0A0A0D]' : 'text-zinc-400 hover:text-zinc-200'
+              mode === 'weekly'
+                ? 'text-[#0A0A0D]'
+                : 'text-zinc-400 hover:text-zinc-200'
             }`}
           >
-            รายสัปดาห์ ({WEEKLY_INTEREST_RATE}฿/งวด)
+            รายสัปดาห์ ({weeklyRate}฿/งวด)
           </button>
           <button
             type="button"
             onClick={() => handleModeSwitch('monthly')}
             className={`relative z-10 rounded-md py-2 text-xs font-semibold transition-colors ${
-              mode === 'monthly' ? 'text-[#0A0A0D]' : 'text-zinc-400 hover:text-zinc-200'
+              mode === 'monthly'
+                ? 'text-[#0A0A0D]'
+                : 'text-zinc-400 hover:text-zinc-200'
             }`}
           >
-            รายเดือน ({MONTHLY_INTEREST_RATE}฿/งวด)
+            รายเดือน ({monthlyRate}฿/งวด)
           </button>
         </div>
 

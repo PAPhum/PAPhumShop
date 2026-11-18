@@ -233,3 +233,5 @@ npx vitest run        # ถ้าแก้ src/lib/crypto|r2|installment หร�
 - [ ] ไม่มี Emoji ในโค้ดหรือข้อความ UI, ไอคอนมาจาก `lucide-react`
 - [ ] สถานะไอดีเป็น PascalCase และไม่แตะ/สร้างตารางหรือ view ซ้ำ
 - [ ] เอกสารใน `docs/` ที่เกี่ยวข้องถูกอัปเดตให้ตรงกับสิ่งที่แก้
+
+3. **PIN** — route ที่อ่าน/เขียนข้อมูลลับต้องส่ง `{ pin: true }` ให้ `requireAdmin({ ownerOnly: true, pin: true })` ซึ่งตรวจคุกกี้ `paphum_admin_pin_ok` ด้วย HMAC-SHA256 (`verifyPinToken`) ร่วมกับ `pinVersionFromSalt(pin_salt)` (ห้ามเทียบ cookie กับ `user.id` ตรง ๆ)

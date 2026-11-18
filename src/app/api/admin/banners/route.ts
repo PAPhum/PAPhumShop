@@ -1,8 +1,20 @@
 import { NextRequest } from 'next/server';
+import { revalidateTag } from 'next/cache';
 import { randomBytes } from 'node:crypto';
+import { deleteR2Object } from '@/lib/r2';
 import { jsonNoStore, requireAdmin } from '@/lib/auth/guard';
+import { dbErrorResponse } from '@/lib/api-error';
 
 const MAX_PINNED_PER_CATEGORY = 10;
+
+function keyFromPublicUrl(url: string | null | undefined): string | null {
+  const base = (process.env.R2_PUBLIC_URL ?? '').replace(/\/+$/, '');
+  if (!url || !base) return null;
+  if (!url.startsWith(`${base}/`)) return null;
+
+  const key = url.slice(base.length + 1);
+  return key || null;
+}
 
 function toUniqueStringArray(value: unknown): string[] {
   if (!Array.isArray(value)) return [];
@@ -26,7 +38,7 @@ export async function GET(req: NextRequest) {
       .select('id', { count: 'exact', head: true });
 
     if (error) {
-      return jsonNoStore({ error: error.message }, { status: 500 });
+      return dbErrorResponse('banners.next_code', error, 500);
     }
 
     const total = count ?? 0;
@@ -49,7 +61,7 @@ export async function GET(req: NextRequest) {
     .limit(2000);
 
   if (error) {
-    return jsonNoStore({ error: error.message }, { status: 500 });
+    return dbErrorResponse('banners.list', error, 500);
   }
 
   return jsonNoStore({ banners: data ?? [] });
@@ -97,9 +109,11 @@ export async function POST(req: NextRequest) {
       .single();
 
     if (error) {
-      return jsonNoStore({ error: error.message }, { status: 400 });
+      return dbErrorResponse('banners.create_category', error, 400);
     }
 
+    revalidateTag('categories', { expire: 0 });
+    revalidateTag('banners', { expire: 0 });
     return jsonNoStore({ category });
   }
 
@@ -129,7 +143,7 @@ export async function POST(req: NextRequest) {
     .single();
 
   if (bannerError) {
-    return jsonNoStore({ error: bannerError.message }, { status: 400 });
+    return dbErrorResponse('banners.insert', bannerError, 400);
   }
 
   let deliveryToken: string | null = null;
@@ -157,6 +171,7 @@ export async function POST(req: NextRequest) {
     }
   }
 
+  revalidateTag('banners', { expire: 0 });
   return jsonNoStore({ banner, deliveryToken });
 }
 
@@ -178,6 +193,7 @@ export async function PATCH(req: NextRequest) {
           .eq('id', id)
       )
     );
+    revalidateTag('banners', { expire: 0 });
     return jsonNoStore({ ok: true });
   }
 
@@ -199,9 +215,10 @@ export async function PATCH(req: NextRequest) {
       .in('id', bannerIds);
 
     if (fetchErr || !existingRows) {
-      return jsonNoStore(
-        { error: fetchErr?.message ?? 'ไม่พบข้อมูลรูปภาพ' },
-        { status: 400 }
+      return dbErrorResponse(
+        'banners.bulk_update_categories',
+        fetchErr ?? new Error('ไม่พบข้อมูลรูปภาพ'),
+        400
       );
     }
 
@@ -234,6 +251,7 @@ export async function PATCH(req: NextRequest) {
       })
     );
 
+    revalidateTag('banners', { expire: 0 });
     return jsonNoStore({ ok: true, updatedCount: existingRows.length });
   }
 
@@ -254,9 +272,10 @@ export async function PATCH(req: NextRequest) {
       .eq('id', bannerId);
 
     if (error) {
-      return jsonNoStore({ error: error.message }, { status: 400 });
+      return dbErrorResponse('banners.update_categories', error, 400);
     }
 
+    revalidateTag('banners', { expire: 0 });
     return jsonNoStore({ ok: true, category_ids: categoryIds });
   }
 
@@ -305,7 +324,7 @@ export async function PATCH(req: NextRequest) {
       .eq('id', bannerId);
 
     if (error) {
-      return jsonNoStore({ error: error.message }, { status: 400 });
+      return dbErrorResponse('banners.pin', error, 400);
     }
   } else {
     const { error } = await supabase
@@ -317,10 +336,11 @@ export async function PATCH(req: NextRequest) {
       .eq('id', bannerId);
 
     if (error) {
-      return jsonNoStore({ error: error.message }, { status: 400 });
+      return dbErrorResponse('banners.unpin', error, 400);
     }
   }
 
+  revalidateTag('banners', { expire: 0 });
   return jsonNoStore({ ok: true });
 }
 
@@ -336,10 +356,38 @@ export async function DELETE(req: NextRequest) {
     return jsonNoStore({ error: 'Missing id' }, { status: 400 });
   }
 
+  // เก็บ key ของไฟล์บน R2 ไว้ก่อนลบแถว (FK deliveries.banner_id เป็น ON DELETE SET NULL)
+  const [{ data: banner }, { data: deliveryRows }] = await Promise.all([
+    supabase
+      .from('banners')
+      .select('watermarked_url')
+      .eq('id', id)
+      .maybeSingle(),
+    supabase
+      .from('deliveries')
+      .select('original_r2_key')
+      .eq('banner_id', id),
+  ]);
+
   const { error } = await supabase.from('banners').delete().eq('id', id);
   if (error) {
-    return jsonNoStore({ error: error.message }, { status: 400 });
+    return dbErrorResponse('banners.delete', error, 400);
   }
 
+  const keys = new Set<string>();
+  const watermarkedKey = keyFromPublicUrl(banner?.watermarked_url);
+  if (watermarkedKey) keys.add(watermarkedKey);
+
+  for (const row of deliveryRows ?? []) {
+    const key = String(row.original_r2_key ?? '').trim();
+    if (key) keys.add(key);
+  }
+
+  if (keys.size > 0) {
+    // ลบ object ล้มเหลวไม่ควรทำให้การลบแถวใน DB ถูกมองว่าล้มเหลว
+    await Promise.allSettled([...keys].map((key) => deleteR2Object(key)));
+  }
+
+  revalidateTag('banners', { expire: 0 });
   return jsonNoStore({ ok: true });
 }

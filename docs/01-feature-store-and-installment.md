@@ -479,3 +479,24 @@ npx vitest run tests/lib/installment.test.ts
 | 8 | เพิ่มเทสต์ 19 ข้อตาม §7.2 | กัน regression |
 | 9 | ลบหรือเชื่อม `InstallmentCalculator.tsx` | ลด dead code |
 | 10 | ใส่ `ModalPortal` + focus trap ใน `ImageLightbox` | accessibility |
+
+---
+
+## 9. สถานะการแก้ไข (อัปเดต 18 พ.ย. 2026)
+
+| งาน | สิ่งที่ทำ | ไฟล์ |
+|---|---|---|
+| รวมเกณฑ์โหมดผ่อน | ทุกจุดใช้ `getDefaultInstallmentMode()` / `MONTHLY_DEFAULT_PRICE_THRESHOLD = 6000` จาก lib แล้ว (เดิมมี 5,000 ใน UI/API) | `AccountDetailClient.tsx`, `AccountCatalogClient.tsx`, `AccountFormModal.tsx`, `ScheduleGeneratorModal.tsx`, `api/admin/accounts/route.ts`, `api/admin/accounts/[id]/route.ts` |
+| ลบสูตรซ้ำใน UI | `AccountDetailClient` เรียก `calculateInstallmentPlan()` ตรง ๆ, จำกัดงวด 1–24 และ clamp ดาวน์ให้อยู่ในช่วง `[minDown, price]`, แสดงดอก/ยอดจากผลลัพธ์ lib | `AccountDetailClient.tsx` |
+| status guard | สถานะ `SoldOut` แสดงกล่อง "ไอดีนี้ขายแล้ว" แทนกล่องคำนวณผ่อนและปุ่มคัดลอก | `AccountDetailClient.tsx` |
+
+> หมายเหตุ: `installment_settings.weekly_interest_rate/monthly_interest_rate` ยังไม่ถูกใช้ในการคำนวณ เพราะ `calculateInstallmentPlan` ใช้ค่าคงที่จาก lib (140/600) ตาม§4.3
+
+---
+
+## 10. สถานะการแก้ไขรอบที่ 2 (อัปเดต 18 พ.ย. 2026)
+
+| งาน | สิ่งที่ทำ | ไฟล์ |
+|---|---|---|
+| เรทผ่อนจากฐานข้อมูล | `resolveInstallmentRates(settings)` อ่าน `weekly_interest_rate` และ `monthly_interest_rate` จากตาราง `installment_settings` ส่งเข้า `calculateInstallmentPlan()` (fallback 140/600 เมื่อไม่มีหรือค่าไม่ถูกต้อง) | `src/lib/installment-config.ts`, `src/lib/installment.ts`, `AccountDetailClient.tsx` |
+| แคชหน้าสาธารณะ & R2 Image | ย้ายการโหลดข้อมูล `/store` และ `/id/[code]` ไปใช้ `unstable_cache` (`tags: ['accounts']`, `['settings']`) และล้างแคชผ่าน `revalidateTag` ทันทีที่หลังบ้านบันทึก; เปลี่ยนรูปหน้าร้านเป็น `next/image` (AVIF/WebP) สำหรับโดเมน R2 ของร้าน | `src/lib/public-data.ts`, `src/lib/image-url.ts`, `next.config.ts`, `store/page.tsx`, `id/[code]/page.tsx`, `AccountCatalogClient.tsx`, `AccountDetailClient.tsx` |

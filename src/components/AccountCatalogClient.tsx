@@ -2,6 +2,7 @@
 
 import { useState, useMemo } from 'react';
 import Link from 'next/link';
+import Image from 'next/image';
 import {
   Search,
   Snowflake,
@@ -9,32 +10,16 @@ import {
   X,
   ArrowUpRight,
 } from 'lucide-react';
-import { AccountPublic } from '@/types/database';
+import { StoreAccount } from '@/types/database';
+import { getDefaultInstallmentMode } from '@/lib/installment';
+import { isOptimizableImageUrl } from '@/lib/image-url';
 
 interface AccountCatalogClientProps {
-  accounts?: AccountPublic[];
-  initialAccounts?: AccountPublic[];
+  accounts?: StoreAccount[];
+  initialAccounts?: StoreAccount[];
 }
 
 type PublicStatusFilter = 'ALL' | 'Available' | 'Installment' | 'SoldOut';
-
-const STATUS_BADGE: Record<
-  Exclude<PublicStatusFilter, 'ALL'>,
-  { label: string; className: string }
-> = {
-  Available: {
-    label: 'พร้อมขาย',
-    className: 'border-[#93C5FD]/40 bg-[#090B10]/85 text-[#93C5FD]',
-  },
-  Installment: {
-    label: 'ติดผ่อน',
-    className: 'border-amber-500/40 bg-[#090B10]/85 text-amber-300',
-  },
-  SoldOut: {
-    label: 'ขายแล้ว',
-    className: 'border-red-500/40 bg-[#090B10]/85 text-red-300',
-  },
-};
 
 export default function AccountCatalogClient({
   accounts,
@@ -200,15 +185,13 @@ export default function AccountCatalogClient({
         </div>
       ) : (
         <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-3 sm:gap-4 lg:grid-cols-4">
-          {visibleAccounts.map((acc) => {
-            const badge =
-              STATUS_BADGE[acc.status as Exclude<PublicStatusFilter, 'ALL'>] ??
-              STATUS_BADGE.Available;
-
-            const isMonthly = acc.price > 5000;
+          {visibleAccounts.map((acc, index) => {
+            const isMonthly =
+              getDefaultInstallmentMode(acc.price) === 'monthly';
             const lowestDown = isMonthly
               ? acc.min_down_monthly
               : acc.min_down_weekly;
+            const canOptimize = isOptimizableImageUrl(acc.main_image_url);
 
             return (
               <Link
@@ -220,12 +203,23 @@ export default function AccountCatalogClient({
                   {/* รูปป้ายแนวตั้งเหมือนหน้าตัดรูป ชิดบน */}
                   <div className="relative aspect-[4/5] w-full overflow-hidden bg-[#0D0F14]">
                     {acc.main_image_url ? (
-                      <img
-                        src={acc.main_image_url}
-                        alt={acc.code}
-                        loading="lazy"
-                        className="h-full w-full object-cover object-top transition-transform duration-500 ease-[cubic-bezier(0.22,1,0.36,1)] group-hover:scale-[1.03]"
-                      />
+                      canOptimize ? (
+                        <Image
+                          src={acc.main_image_url}
+                          alt={acc.code}
+                          fill
+                          priority={index < 4}
+                          sizes="(max-width: 640px) 50vw, (max-width: 1024px) 33vw, 25vw"
+                          className="object-cover object-top transition-transform duration-500 ease-[cubic-bezier(0.22,1,0.36,1)] group-hover:scale-[1.03]"
+                        />
+                      ) : (
+                        <img
+                          src={acc.main_image_url}
+                          alt={acc.code}
+                          loading="lazy"
+                          className="h-full w-full object-cover object-top transition-transform duration-500 ease-[cubic-bezier(0.22,1,0.36,1)] group-hover:scale-[1.03]"
+                        />
+                      )
                     ) : (
                       <div className="flex h-full w-full items-center justify-center text-xs text-zinc-600">
                         ไม่มีรูปป้าย
@@ -234,12 +228,6 @@ export default function AccountCatalogClient({
 
                     <span className="absolute top-2 left-2 rounded-md border border-white/15 bg-[#090B10]/85 px-2 py-0.5 text-[11px] font-bold tabular-nums text-[#F1F5F9] sm:top-2.5 sm:left-2.5 sm:text-xs">
                       {acc.code}
-                    </span>
-
-                    <span
-                      className={`absolute top-2 right-2 rounded-full border px-2 py-0.5 text-[10px] font-semibold sm:top-2.5 sm:right-2.5 sm:text-[11px] ${badge.className}`}
-                    >
-                      {badge.label}
                     </span>
                   </div>
 

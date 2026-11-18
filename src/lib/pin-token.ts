@@ -1,7 +1,7 @@
 import crypto from 'node:crypto';
 
 export const PIN_COOKIE_NAME = 'paphum_admin_pin_ok';
-export const PIN_SESSION_SECONDS = 60 * 60;
+export const PIN_SESSION_SECONDS = 60 * 60 * 24 * 30;
 
 function getSigningSecret(): string {
   const explicit = process.env.PIN_TOKEN_SECRET?.trim();

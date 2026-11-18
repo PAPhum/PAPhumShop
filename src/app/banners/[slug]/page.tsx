@@ -1,11 +1,46 @@
+import type { Metadata } from 'next';
 import { Suspense } from 'react';
-import { connection } from 'next/server';
 import { notFound } from 'next/navigation';
-import { createSupabaseServerClient } from '@/lib/supabase/server';
-import { BannerCategory, BannerItem } from '@/types/database';
+import { getCachedBannerCategoryPage } from '@/lib/public-data';
 import BannerCategoryDetailClient from '@/components/BannerCategoryDetailClient';
 
 const PAGE_SIZE = 24;
+
+export async function generateMetadata({
+  params,
+}: {
+  params: Promise<{ slug: string }>;
+}): Promise<Metadata> {
+  const { slug } = await params;
+  let decodedSlug = '';
+  try {
+    decodedSlug = decodeURIComponent(slug).trim();
+  } catch {
+    return { title: 'ผลงานออกแบบ | PAPhum Studio' };
+  }
+
+  const result = await getCachedBannerCategoryPage(decodedSlug, 1, 1);
+  if (!result) {
+    return { title: 'ผลงานออกแบบ | PAPhum Studio' };
+  }
+
+  const title = `${result.category.name} (${result.totalCount} ผลงาน) | PAPhum Studio`;
+  const description =
+    result.category.description ||
+    `รวมผลงานออกแบบและตัดป้ายหมวดหมู่ ${result.category.name}`;
+  const previewImg =
+    result.banners[0]?.watermarked_url || result.category.logo_url;
+
+  return {
+    title,
+    description,
+    openGraph: {
+      title,
+      description,
+      images: previewImg ? [{ url: previewImg }] : [],
+    },
+  };
+}
 
 async function CategoryDetailLoader({
   paramsPromise,
@@ -14,47 +49,40 @@ async function CategoryDetailLoader({
   paramsPromise: Promise<{ slug: string }>;
   searchParamsPromise: Promise<{ page?: string }>;
 }) {
-  await connection();
   const { slug } = await paramsPromise;
   const { page: pageParam } = await searchParamsPromise;
 
-  const decodedSlug = decodeURIComponent(slug);
-  const currentPage = Math.max(1, Number(pageParam) || 1);
-  const from = (currentPage - 1) * PAGE_SIZE;
-  const to = from + PAGE_SIZE - 1;
-
-  const supabase = await createSupabaseServerClient();
-
-  const { data: category } = await supabase
-    .from('banner_categories')
-    .select('*')
-    .eq('slug', decodedSlug)
-    .maybeSingle();
-
-  if (!category) {
+  let decodedSlug = '';
+  try {
+    decodedSlug = decodeURIComponent(slug).trim();
+  } catch {
     notFound();
   }
 
-  const { data: bannersData, count } = await supabase
-    .from('banners')
-    .select('*', { count: 'exact' })
-    .contains('category_ids', [category.id])
-    .eq('is_public', true)
-    .order('is_pinned', { ascending: false })
-    .order('pin_order', { ascending: true })
-    .order('created_at', { ascending: false })
-    .range(from, to);
+  if (!decodedSlug) {
+    notFound();
+  }
 
-  const totalCount = count ?? 0;
-  const totalPages = Math.max(1, Math.ceil(totalCount / PAGE_SIZE));
+  const currentPage = Math.max(1, Number(pageParam) || 1);
+  const result = await getCachedBannerCategoryPage(
+    decodedSlug,
+    currentPage,
+    PAGE_SIZE
+  );
+
+  if (!result) {
+    notFound();
+  }
+
+  const totalPages = Math.max(1, Math.ceil(result.totalCount / PAGE_SIZE));
 
   return (
     <BannerCategoryDetailClient
-      category={category as BannerCategory}
-      banners={(bannersData ?? []) as BannerItem[]}
+      category={result.category}
+      banners={result.banners}
       currentPage={currentPage}
       totalPages={totalPages}
-      totalCount={totalCount}
+      totalCount={result.totalCount}
     />
   );
 }

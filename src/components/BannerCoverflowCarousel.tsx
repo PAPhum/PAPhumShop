@@ -1,8 +1,10 @@
 'use client';
 
 import { useState, useRef } from 'react';
+import Image from 'next/image';
 import { ChevronLeft, ChevronRight } from 'lucide-react';
 import { BannerItem } from '@/types/database';
+import { isOptimizableImageUrl } from '@/lib/image-url';
 
 interface BannerCoverflowCarouselProps {
   banners: BannerItem[];
@@ -36,13 +38,24 @@ export default function BannerCoverflowCarousel({
           onClick={() => onSelectBanner(0)}
           className="frost-card-interactive group relative aspect-[3/4] w-[230px] overflow-hidden rounded-2xl border border-[#93C5FD]/35 shadow-2xl sm:w-[270px] md:w-[295px]"
         >
-          <img
-            src={single.watermarked_url}
-            alt={single.code ?? categoryName}
-            loading="eager"
-            decoding="async"
-            className="h-full w-full object-cover object-top transition-transform duration-[450ms] ease-[cubic-bezier(0.22,1,0.36,1)] group-hover:scale-[1.03]"
-          />
+          {isOptimizableImageUrl(single.watermarked_url) ? (
+            <Image
+              src={single.watermarked_url}
+              alt={single.code ?? categoryName}
+              fill
+              priority
+              sizes="(max-width: 640px) 230px, (max-width: 768px) 270px, 295px"
+              className="object-cover object-top transition-transform duration-[450ms] ease-[cubic-bezier(0.22,1,0.36,1)] group-hover:scale-[1.03]"
+            />
+          ) : (
+            <img
+              src={single.watermarked_url}
+              alt={single.code ?? categoryName}
+              loading="eager"
+              decoding="async"
+              className="h-full w-full object-cover object-top transition-transform duration-[450ms] ease-[cubic-bezier(0.22,1,0.36,1)] group-hover:scale-[1.03]"
+            />
+          )}
           {single.code && (
             <span className="absolute bottom-3 left-3 rounded-lg border border-white/15 bg-[#090B10]/85 px-2.5 py-1 text-xs font-semibold tabular-nums text-zinc-200 backdrop-blur-sm">
               {single.code}
@@ -107,6 +120,7 @@ export default function BannerCoverflowCarousel({
           const slotVirtualIdx = virtualIndex + offset;
           const realIdx = getCircularIndex(slotVirtualIdx, count);
           const banner = banners[realIdx];
+          const canOptimize = isOptimizableImageUrl(banner.watermarked_url);
 
           let positionClass = '';
           if (offset === 0) {
@@ -152,16 +166,30 @@ export default function BannerCoverflowCarousel({
               }}
               className={`group absolute aspect-[3/4] w-[215px] overflow-hidden rounded-2xl border bg-[#12141C] transition-all duration-[450ms] ease-[cubic-bezier(0.22,1,0.36,1)] will-change-transform sm:w-[255px] md:w-[285px] ${positionClass}`}
             >
-              <img
-                src={banner.watermarked_url}
-                alt={banner.code ?? categoryName}
-                loading={Math.abs(offset) <= 1 ? 'eager' : 'lazy'}
-                decoding="async"
-                draggable={false}
-                className={`h-full w-full object-cover object-top transition-transform duration-[450ms] ease-[cubic-bezier(0.22,1,0.36,1)] ${
-                  offset === 0 ? 'group-hover:scale-[1.03]' : ''
-                }`}
-              />
+              {canOptimize ? (
+                <Image
+                  src={banner.watermarked_url}
+                  alt={banner.code ?? categoryName}
+                  fill
+                  priority={offset === 0}
+                  sizes="(max-width: 640px) 215px, (max-width: 768px) 255px, 285px"
+                  draggable={false}
+                  className={`object-cover object-top transition-transform duration-[450ms] ease-[cubic-bezier(0.22,1,0.36,1)] ${
+                    offset === 0 ? 'group-hover:scale-[1.03]' : ''
+                  }`}
+                />
+              ) : (
+                <img
+                  src={banner.watermarked_url}
+                  alt={banner.code ?? categoryName}
+                  loading={Math.abs(offset) <= 1 ? 'eager' : 'lazy'}
+                  decoding="async"
+                  draggable={false}
+                  className={`h-full w-full object-cover object-top transition-transform duration-[450ms] ease-[cubic-bezier(0.22,1,0.36,1)] ${
+                    offset === 0 ? 'group-hover:scale-[1.03]' : ''
+                  }`}
+                />
+              )}
 
               {offset === 0 && banner.code && (
                 <span className="absolute bottom-3 left-3 rounded-lg border border-white/15 bg-[#090B10]/85 px-2.5 py-1 text-xs font-semibold tabular-nums text-zinc-200 backdrop-blur-sm">

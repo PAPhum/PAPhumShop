@@ -568,3 +568,25 @@ scrypt default ใช้เวลา ~50–100 ms ต่อครั้ง → �
 | 8 | เก็บค่าดาวน์ขั้นต่ำที่ผู้ใช้กรอกตอนสร้างไอดี | บั๊กข้อมูลธุรกิจ |
 | 9 | เข้ารหัสหรือไม่ส่ง seed 2FA ออกไป Sheets | ลดการรั่วของ 2FA |
 | 10 | เพิ่ม validation ด้วย zod + ซ่อน error ภายใน | ลด schema disclosure |
+
+---
+
+## 12. สถานะการแก้ไข (อัปเดต 18 พ.ย. 2026)
+
+| งาน | สิ่งที่ทำ | ไฟล์ |
+|---|---|---|
+| เก็บค่าดาวน์ขั้นต่ำจากฟอร์ม | `POST /api/admin/accounts` อ่าน `min_down_weekly` / `min_down_monthly` จาก body (`Math.max(0, Math.trunc(Number(...) || 0))`) แทนการ hardcode 0 — ฟอร์มส่งค่ามาตั้งแต่เดิมแล้วแต่ API ทิ้ง | `src/app/api/admin/accounts/route.ts` |
+| รวมเกณฑ์โหมดผ่อน | ใช้ `getDefaultInstallmentMode()` จาก `src/lib/installment.ts` (`MONTHLY_DEFAULT_PRICE_THRESHOLD = 6000`) ทั้งใน POST/PATCH ของ API และใน `AccountFormModal` (label แสดงเลขเกณฑ์จาก constant) เดิม API ใช้ `> 5000` | `src/app/api/admin/accounts/route.ts`, `src/app/api/admin/accounts/[id]/route.ts`, `src/components/admin/AccountFormModal.tsx` |
+| ตารางแจกแจงงวด | `ScheduleGeneratorModal` ใช้ `getDefaultInstallmentMode` แทนเงื่อนไข `>= 6000` ที่เขียนซ้ำ | `src/components/admin/ScheduleGeneratorModal.tsx` |
+
+> ยังค้าง (นอกขอบเขตโค้ดรอบนี้): `interest_free_weeks/months` ใน POST ยัง derive จากราคาแม้ฟอร์มจะส่งค่ามา, และงาน DB เรื่อง drop policy anon ของ `deliveries` + deploy Apps Script เวอร์ชันใหม่
+
+---
+
+## 13. สถานะการแก้ไขรอบที่ 2 (อัปเดต 18 พ.ย. 2026)
+
+| งาน | สิ่งที่ทำ | ไฟล์ |
+|---|---|---|
+| คงค่าปลอดดอกรายไอดี | `POST /api/admin/accounts` บันทึก `interest_free_weeks` และ `interest_free_months` ที่ผู้ใช้กรอกจากฟอร์มตรง ๆ ไม่เขียนทับจากราคา | `src/app/api/admin/accounts/route.ts` |
+| อายุ PIN 30 วัน + ตัวนับใน DB | `PIN_SESSION_SECONDS = 2,592,000` (30 วัน) และย้ายตัวนับ `pin_attempts` ไปเก็บใน Postgres (`supabase/migrations/003_pin_attempts.sql`) แทนหน่วยความจำชั่วคราว | `src/lib/pin-token.ts`, `src/lib/pin-attempts.ts`, `src/app/api/admin/pin/route.ts` |
+| Logger & Error กลาง | แทนที่ `error.message` ดิบในทุก admin route ด้วย `dbErrorResponse()` / `serverErrorResponse()` ที่บันทึก log แบบ redacting ข้อมูลลับ | `src/lib/logger.ts`, `src/lib/api-error.ts`, `src/app/api/admin/**` |

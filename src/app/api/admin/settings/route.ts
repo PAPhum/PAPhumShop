@@ -1,13 +1,11 @@
 import { NextRequest } from 'next/server';
+import { revalidateTag } from 'next/cache';
 import { jsonNoStore, requireAdmin } from '@/lib/auth/guard';
+import { dbErrorResponse } from '@/lib/api-error';
 
 const NUMERIC_FIELDS = [
   'weekly_interest_rate',
   'monthly_interest_rate',
-  'default_min_down_weekly',
-  'default_min_down_monthly',
-  'default_free_weeks',
-  'default_free_months',
 ] as const;
 
 type NumericField = (typeof NUMERIC_FIELDS)[number];
@@ -25,7 +23,7 @@ export async function GET() {
     .maybeSingle();
 
   if (error) {
-    return jsonNoStore({ error: error.message }, { status: 500 });
+    return dbErrorResponse('settings.get', error, 500);
   }
 
   return jsonNoStore({ settings: data ?? null });
@@ -75,9 +73,14 @@ async function updateSettings(req: NextRequest) {
     .select('*')
     .maybeSingle();
 
-  if (error) {
-    return jsonNoStore({ error: error.message }, { status: 500 });
+  if (!data && !error) {
+    return jsonNoStore({ error: 'ยังไม่มีแถวตั้งค่า' }, { status: 404 });
   }
 
+  if (error) {
+    return dbErrorResponse('settings.update', error, 500);
+  }
+
+  revalidateTag('settings', { expire: 0 });
   return jsonNoStore({ ok: true, settings: data ?? null });
 }

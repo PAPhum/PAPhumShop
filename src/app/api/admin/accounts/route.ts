@@ -1,4 +1,5 @@
 import { NextRequest } from 'next/server';
+import { revalidateTag } from 'next/cache';
 import { encryptSecret } from '@/lib/crypto';
 import {
   syncAccountToSheets,
@@ -7,6 +8,7 @@ import {
 } from '@/lib/sheets-sync';
 import { AccountStatus } from '@/types/database';
 import { jsonNoStore, requireAdmin } from '@/lib/auth/guard';
+import { dbErrorResponse, serverErrorResponse } from '@/lib/api-error';
 
 const VALID_STATUSES: AccountStatus[] = [
   'Unavailable',
@@ -59,15 +61,12 @@ export async function GET() {
       .order('created_at', { ascending: false });
 
     if (error) {
-      return jsonNoStore({ error: error.message }, { status: 500 });
+      return dbErrorResponse('accounts.list', error, 500);
     }
 
     return jsonNoStore({ accounts: data ?? [] });
   } catch (err) {
-    return jsonNoStore(
-      { error: err instanceof Error ? err.message : 'เกิดข้อผิดพลาดฝั่งเซิร์ฟเวอร์' },
-      { status: 500 }
-    );
+    return serverErrorResponse('accounts.get', err);
   }
 }
 
@@ -88,7 +87,7 @@ export async function POST(req: NextRequest) {
         .order('code', { ascending: true });
 
       if (error) {
-        return jsonNoStore({ ok: false, error: error.message }, { status: 500 });
+        return dbErrorResponse('accounts.sync_all', error, 500);
       }
 
       const payloads = (rows ?? []).map((row) => buildSheetPayload(row));
@@ -115,10 +114,6 @@ export async function POST(req: NextRequest) {
       : 'Unavailable';
 
     const priceNum = Number(body.price) || 0;
-    // กติกาผ่อน: <= 5,000 เป็นรายสัปดาห์ (ปลอดดอก 2 สัปดาห์), > 5,000 เป็นรายเดือน (ปลอดดอก 1 เดือน)
-    const isMonthlyPlan = priceNum > 5000;
-    const freeWeeks = isMonthlyPlan ? 0 : 2;
-    const freeMonths = isMonthlyPlan ? 1 : 0;
 
     const combinedNotes = packPrivateNotes({
       purchaseDate: body.purchase_date,
@@ -133,10 +128,19 @@ export async function POST(req: NextRequest) {
       status,
       price: priceNum,
       cost: Number(body.cost) || 0,
-      min_down_weekly: 0,
-      min_down_monthly: 0,
-      interest_free_weeks: freeWeeks,
-      interest_free_months: freeMonths,
+      min_down_weekly: Math.max(0, Math.trunc(Number(body.min_down_weekly) || 0)),
+      min_down_monthly: Math.max(
+        0,
+        Math.trunc(Number(body.min_down_monthly) || 0)
+      ),
+      interest_free_weeks: Math.max(
+        0,
+        Math.trunc(Number(body.interest_free_weeks) || 0)
+      ),
+      interest_free_months: Math.max(
+        0,
+        Math.trunc(Number(body.interest_free_months) || 0)
+      ),
       tags: Array.isArray(body.tags) ? body.tags : [],
       description: body.description ? String(body.description) : null,
       main_image_url: body.main_image_url ? String(body.main_image_url) : null,
@@ -171,7 +175,7 @@ export async function POST(req: NextRequest) {
       .single();
 
     if (insertError) {
-      return jsonNoStore({ error: insertError.message }, { status: 400 });
+      return dbErrorResponse('accounts.insert', insertError, 400);
     }
 
     let sheetWarning: string | undefined;
@@ -180,19 +184,17 @@ export async function POST(req: NextRequest) {
       if (!syncRes.ok) {
         sheetWarning = syncRes.error;
       }
-    } catch (err) {
-      sheetWarning = err instanceof Error ? err.message : 'Sheets sync error';
+    } catch {
+      sheetWarning = 'Sheets sync error';
     }
 
+    revalidateTag('accounts', { expire: 0 });
     return jsonNoStore({
       ok: true,
       id: created.id,
       sheetWarning,
     });
   } catch (err) {
-    return jsonNoStore(
-      { error: err instanceof Error ? err.message : 'เกิดข้อผิดพลาดระหว่างบันทึกไอดี' },
-      { status: 500 }
-    );
+    return serverErrorResponse('accounts.post', err);
   }
 }

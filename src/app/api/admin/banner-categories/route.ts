@@ -1,5 +1,7 @@
 import { NextRequest } from 'next/server';
+import { revalidateTag } from 'next/cache';
 import { jsonNoStore, requireAdmin } from '@/lib/auth/guard';
+import { dbErrorResponse } from '@/lib/api-error';
 
 function makeSlug(name: string): string {
   const base = name
@@ -23,7 +25,7 @@ export async function GET() {
     .order('created_at', { ascending: true });
 
   if (error) {
-    return jsonNoStore({ error: error.message }, { status: 500 });
+    return dbErrorResponse('banner_categories.list', error, 500);
   }
 
   const enriched = await Promise.all(
@@ -87,9 +89,11 @@ export async function POST(req: NextRequest) {
     .single();
 
   if (error) {
-    return jsonNoStore({ error: error.message }, { status: 400 });
+    return dbErrorResponse('banner_categories.insert', error, 400);
   }
 
+  revalidateTag('categories', { expire: 0 });
+  revalidateTag('banners', { expire: 0 });
   return jsonNoStore({ category: created });
 }
 
@@ -111,6 +115,8 @@ export async function PATCH(req: NextRequest) {
           .eq('id', id)
       )
     );
+    revalidateTag('categories', { expire: 0 });
+    revalidateTag('banners', { expire: 0 });
     return jsonNoStore({ ok: true });
   }
 
@@ -138,9 +144,11 @@ export async function PATCH(req: NextRequest) {
     .single();
 
   if (error) {
-    return jsonNoStore({ error: error.message }, { status: 400 });
+    return dbErrorResponse('banner_categories.update', error, 400);
   }
 
+  revalidateTag('categories', { expire: 0 });
+  revalidateTag('banners', { expire: 0 });
   return jsonNoStore({ category: updated });
 }
 
@@ -162,8 +170,10 @@ export async function DELETE(req: NextRequest) {
     .eq('id', id);
 
   if (error) {
-    return jsonNoStore({ error: error.message }, { status: 400 });
+    return dbErrorResponse('banner_categories.delete', error, 400);
   }
 
+  revalidateTag('categories', { expire: 0 });
+  revalidateTag('banners', { expire: 0 });
   return jsonNoStore({ ok: true });
 }

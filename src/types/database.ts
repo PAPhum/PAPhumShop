@@ -18,6 +18,20 @@ export interface AccountPublic {
   updated_at: string;
 }
 
+export type StoreAccount = Pick<
+  AccountPublic,
+  | 'id'
+  | 'code'
+  | 'status'
+  | 'price'
+  | 'min_down_weekly'
+  | 'min_down_monthly'
+  | 'tags'
+  | 'description'
+  | 'main_image_url'
+  | 'created_at'
+>;
+
 export interface AccountSecretDecrypted {
   cost: number;
   purchase_date?: string;

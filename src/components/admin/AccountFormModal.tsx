@@ -21,6 +21,10 @@ import {
   InstallmentSettings,
 } from '@/types/database';
 import { processImageToWebP } from '@/lib/image-processor';
+import {
+  MONTHLY_DEFAULT_PRICE_THRESHOLD,
+  getDefaultInstallmentMode,
+} from '@/lib/installment';
 import ModalPortal from '@/components/ModalPortal';
 
 interface AccountFormModalProps {
@@ -491,13 +495,15 @@ export default function AccountFormModal({
   };
 
   const priceNum = Number(price) || 0;
-  const isMonthlyTier = priceNum > 5000;
+  const isMonthlyTier = getDefaultInstallmentMode(priceNum) === 'monthly';
+  const thresholdLabel =
+    MONTHLY_DEFAULT_PRICE_THRESHOLD.toLocaleString('en-US');
   const installmentRuleLabel =
     priceNum <= 0
       ? 'ยังไม่ระบุราคาขาย (กรอกทีหลังตอนตัดรูปเสร็จได้)'
       : isMonthlyTier
-        ? 'ราคา > 5,000 → ผ่อนรายเดือน'
-        : 'ราคา ≤ 5,000 → ผ่อนรายสัปดาห์';
+        ? `ราคา ${thresholdLabel} ขึ้นไป → ผ่อนรายเดือน`
+        : `ต่ำกว่า ${thresholdLabel} → ผ่อนรายสัปดาห์`;
 
   const galleryPercent = galleryProgress
     ? Math.round((galleryProgress.done / galleryProgress.total) * 100)

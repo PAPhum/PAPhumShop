@@ -27,6 +27,7 @@ import {
   BannerCategory,
   InstallmentSettings,
 } from '@/types/database';
+import { resolveInstallmentRates } from '@/lib/installment-config';
 import AccountFormModal from './AccountFormModal';
 import AccountsSecretTable, {
   AccountWithSecretRow,
@@ -95,6 +96,11 @@ export default function AdminDashboardClient({
     setAccounts(initialAccounts);
   }, [initialAccounts]);
 
+  const resolvedRates = useMemo(
+    () => resolveInstallmentRates(settings),
+    [settings]
+  );
+
   const [pinUnlocked, setPinUnlocked] = useState<boolean>(initialPinUnlocked);
   const [pinConfigured, setPinConfigured] = useState<boolean>(initialHasPin);
   const [pinModalOpen, setPinModalOpen] = useState<boolean>(false);
@@ -122,6 +128,7 @@ export default function AdminDashboardClient({
   const [savingSettings, setSavingSettings] = useState<boolean>(false);
   const [settingsSaved, setSettingsSaved] = useState<boolean>(false);
   const [settingsError, setSettingsError] = useState<string | null>(null);
+
   const filteredAccounts = useMemo(() => {
     const q = searchQuery.trim().toLowerCase();
     return accounts.filter((acc) => {
@@ -225,6 +232,14 @@ export default function AdminDashboardClient({
     accountId: string,
     nextStatus: AccountStatus
   ) => {
+    if (
+      (nextStatus === 'Installment' || nextStatus === 'SoldOut') &&
+      !pinUnlocked
+    ) {
+      setPinModalOpen(true);
+      return;
+    }
+
     const previous = accounts;
     setAccounts((prev) =>
       prev.map((a) => (a.id === accountId ? { ...a, status: nextStatus } : a))
@@ -238,6 +253,10 @@ export default function AdminDashboardClient({
 
     if (!res.ok) {
       setAccounts(previous);
+      if (res.status === 403) {
+        setPinUnlocked(false);
+        setPinModalOpen(true);
+      }
     }
   };
 
@@ -295,7 +314,10 @@ export default function AdminDashboardClient({
       const res = await fetch('/api/admin/settings', {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(settings),
+        body: JSON.stringify({
+          weekly_interest_rate: settings.weekly_interest_rate,
+          monthly_interest_rate: settings.monthly_interest_rate,
+        }),
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
@@ -725,74 +747,6 @@ export default function AdminDashboardClient({
                 className="w-full rounded-xl border border-white/[0.1] bg-[#0D0F14] px-3.5 py-2.5 text-sm tabular-nums text-[#F1F5F9]"
               />
             </div>
-
-            <div>
-              <label className="mb-1 block text-xs text-zinc-400">
-                ดาวน์ขั้นต่ำรายสัปดาห์ (บาท)
-              </label>
-              <input
-                type="number"
-                value={settings.default_min_down_weekly}
-                onChange={(e) =>
-                  setSettings({
-                    ...settings,
-                    default_min_down_weekly: Number(e.target.value),
-                  })
-                }
-                className="w-full rounded-xl border border-white/[0.1] bg-[#0D0F14] px-3.5 py-2.5 text-sm tabular-nums text-[#F1F5F9]"
-              />
-            </div>
-
-            <div>
-              <label className="mb-1 block text-xs text-zinc-400">
-                ดาวน์ขั้นต่ำรายเดือน (บาท)
-              </label>
-              <input
-                type="number"
-                value={settings.default_min_down_monthly}
-                onChange={(e) =>
-                  setSettings({
-                    ...settings,
-                    default_min_down_monthly: Number(e.target.value),
-                  })
-                }
-                className="w-full rounded-xl border border-white/[0.1] bg-[#0D0F14] px-3.5 py-2.5 text-sm tabular-nums text-[#F1F5F9]"
-              />
-            </div>
-
-            <div>
-              <label className="mb-1 block text-xs text-zinc-400">
-                ปลอดดอกเบี้ย (สัปดาห์)
-              </label>
-              <input
-                type="number"
-                value={settings.default_free_weeks}
-                onChange={(e) =>
-                  setSettings({
-                    ...settings,
-                    default_free_weeks: Number(e.target.value),
-                  })
-                }
-                className="w-full rounded-xl border border-white/[0.1] bg-[#0D0F14] px-3.5 py-2.5 text-sm tabular-nums text-[#F1F5F9]"
-              />
-            </div>
-
-            <div>
-              <label className="mb-1 block text-xs text-zinc-400">
-                ปลอดดอกเบี้ย (เดือน)
-              </label>
-              <input
-                type="number"
-                value={settings.default_free_months}
-                onChange={(e) =>
-                  setSettings({
-                    ...settings,
-                    default_free_months: Number(e.target.value),
-                  })
-                }
-                className="w-full rounded-xl border border-white/[0.1] bg-[#0D0F14] px-3.5 py-2.5 text-sm tabular-nums text-[#F1F5F9]"
-              />
-            </div>
           </div>
 
           <div className="flex items-center gap-3 pt-2">
@@ -861,15 +815,12 @@ export default function AdminDashboardClient({
           isOpen={true}
           initialCode={scheduleAccount.code}
           initialPrice={scheduleAccount.price}
-          initialDownWeekly={
-            scheduleAccount.min_down_weekly || settings.default_min_down_weekly
-          }
-          initialDownMonthly={
-            scheduleAccount.min_down_monthly ||
-            settings.default_min_down_monthly
-          }
+          initialDownWeekly={scheduleAccount.min_down_weekly}
+          initialDownMonthly={scheduleAccount.min_down_monthly}
           initialFreeWeeks={scheduleAccount.interest_free_weeks}
           initialFreeMonths={scheduleAccount.interest_free_months}
+          weeklyRate={resolvedRates.weeklyRate}
+          monthlyRate={resolvedRates.monthlyRate}
           onClose={() => setScheduleAccount(null)}
         />
       )}

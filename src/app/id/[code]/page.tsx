@@ -1,12 +1,46 @@
+import type { Metadata } from 'next';
 import { Suspense } from 'react';
-import { connection } from 'next/server';
 import { notFound } from 'next/navigation';
-import { createSupabaseServerClient } from '@/lib/supabase/server';
-import { AccountPublic, InstallmentSettings } from '@/types/database';
+import {
+  getCachedAccountByCode,
+  getCachedInstallmentSettings,
+} from '@/lib/public-data';
 import AccountDetailClient from '@/components/AccountDetailClient';
 
 interface AccountPageProps {
   params: Promise<{ code: string }>;
+}
+
+export async function generateMetadata({
+  params,
+}: AccountPageProps): Promise<Metadata> {
+  const { code } = await params;
+  let decodedCode = '';
+  try {
+    decodedCode = decodeURIComponent(code).trim();
+  } catch {
+    return { title: 'ไม่พบข้อมูลไอดี | PAPhum Shop' };
+  }
+
+  const account = await getCachedAccountByCode(decodedCode);
+  if (!account) {
+    return { title: 'ไม่พบข้อมูลไอดี | PAPhum Shop' };
+  }
+
+  const title = `ไอดี ${account.code} — ราคา ${account.price.toLocaleString('en-US')}.- | PAPhum Shop`;
+  const description =
+    account.description?.slice(0, 140) ||
+    `รายละเอียดและคำนวณยอดผ่อนไอดี ${account.code} ราคา ${account.price.toLocaleString('en-US')} บาท`;
+
+  return {
+    title,
+    description,
+    openGraph: {
+      title,
+      description,
+      images: account.main_image_url ? [{ url: account.main_image_url }] : [],
+    },
+  };
 }
 
 async function AccountDetailLoader({
@@ -14,31 +48,32 @@ async function AccountDetailLoader({
 }: {
   params: Promise<{ code: string }>;
 }) {
-  await connection();
   const { code } = await params;
-  const decodedCode = decodeURIComponent(code).trim();
-  const supabase = await createSupabaseServerClient();
 
-  const [accountRes, settingsRes] = await Promise.all([
-    supabase
-      .from('accounts')
-      .select(
-        'id, code, status, price, min_down_weekly, min_down_monthly, interest_free_weeks, interest_free_months, tags, description, main_image_url, gallery_urls, created_at, updated_at'
-      )
-      .ilike('code', decodedCode)
-      .neq('status', 'Unavailable')
-      .maybeSingle(),
-    supabase.from('installment_settings').select('*').eq('id', 1).maybeSingle(),
+  let decodedCode = '';
+  try {
+    decodedCode = decodeURIComponent(code).trim();
+  } catch {
+    notFound();
+  }
+
+  if (!decodedCode) {
+    notFound();
+  }
+
+  const [account, settings] = await Promise.all([
+    getCachedAccountByCode(decodedCode),
+    getCachedInstallmentSettings(),
   ]);
 
-  if (!accountRes.data) {
+  if (!account) {
     notFound();
   }
 
   return (
     <AccountDetailClient
-      account={accountRes.data as AccountPublic}
-      settings={(settingsRes.data as InstallmentSettings) ?? undefined}
+      account={account}
+      settings={settings ?? undefined}
     />
   );
 }

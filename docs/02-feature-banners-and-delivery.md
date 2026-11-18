@@ -397,3 +397,15 @@ RLS ของ `banners` ให้ anon อ่านเฉพาะ `is_public = 
 | 8 | เพิ่ม fallback `category_id` ใน `/banners/[slug]` และล้าง dangling array ตอนลบหมวด | ข้อมูลสองหน้าไม่ขัดกัน |
 | 9 | เพิ่ม `noindex` + `robots` และ rate limit ให้ `/deliver` | ลดการรั่วของลิงก์ |
 | 10 | ใช้ `ModalPortal` + focus trap + Esc ใน modal ของ `BannerCategoryManager` | accessibility |
+
+---
+
+## 10. สถานะการแก้ไข (อัปเดต 18 พ.ย. 2026)
+
+| งาน | สิ่งที่ทำ | ไฟล์ |
+|---|---|---|
+| path presign ของโลโก้หมวด | เปลี่ยนจาก `/api/upload/presign` เป็น `/api/admin/upload/presign` และอ่าน response แบบกันพลาด (`json().catch(() => ({}))`) พร้อมตรวจว่ามี `uploadUrl` ก่อน PUT | `src/components/admin/BannerCategoryManager.tsx:37-60` |
+| ลบไฟล์บน R2 เมื่อลบ banner | ก่อนลบแถว อ่าน `banners.watermarked_url` + `deliveries.original_r2_key` (FK เป็น `ON DELETE SET NULL`) แล้ว derive key จาก `R2_PUBLIC_URL` และเรียก `deleteR2Object` ผ่าน `Promise.allSettled` เพื่อไม่ให้ R2 ล้มแล้วทำให้การลบแถวถูกมองว่าล้มเหลว | `src/app/api/admin/banners/route.ts` (`keyFromPublicUrl`, `DELETE`) |
+
+> หมายเหตุ: `banners` บน production ไม่มีคอลัมน์ `original_r2_key` — ต้นฉบับเก็บอยู่ใน `deliveries.original_r2_key` เท่านั้น ถ้า URL ไม่ขึ้นต้นด้วย `R2_PUBLIC_URL` จะไม่ลบ object (กันลบไฟล์นอก bucket)
+> ยังค้าง: ตั้ง lifecycle rule 7 วันของ prefix `temp-deliveries` (งานฝั่ง R2 console ไม่ใช่โค้ด)

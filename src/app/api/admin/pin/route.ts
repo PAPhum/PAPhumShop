@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { createSupabaseServerClient } from '@/lib/supabase/server';
+import { createSupabaseAdminClient } from '@/lib/supabase/admin';
 import { hashAdminPin, verifyAdminPin } from '@/lib/crypto';
 import {
   PIN_COOKIE_NAME,
@@ -8,7 +9,9 @@ import {
   signPinToken,
 } from '@/lib/pin-token';
 import { isPinUnlocked, NO_STORE_HEADERS } from '@/lib/auth/guard';
-import { checkRateLimit, getClientIp, resetRateLimit } from '@/lib/rate-limit';
+import { getClientIp } from '@/lib/rate-limit';
+import { checkPinAttempts, clearPinAttempts } from '@/lib/pin-attempts';
+import { dbErrorResponse, serverErrorResponse } from '@/lib/api-error';
 
 const PIN_MAX_ATTEMPTS = 5;
 const PIN_WINDOW_MS = 15 * 60 * 1000;
@@ -85,16 +88,23 @@ export async function POST(request: Request) {
       );
     }
 
+    const admin = createSupabaseAdminClient();
     const ip = getClientIp(request);
     const userLimitKey = `pin:user:${user.id}:${ip}`;
     const ipLimitKey = `pin:ip:${ip}`;
 
-    const userLimit = checkRateLimit(
+    const userLimit = await checkPinAttempts(
+      admin,
       userLimitKey,
       PIN_MAX_ATTEMPTS,
       PIN_WINDOW_MS
     );
-    const ipLimit = checkRateLimit(ipLimitKey, PIN_IP_MAX_ATTEMPTS, PIN_WINDOW_MS);
+    const ipLimit = await checkPinAttempts(
+      admin,
+      ipLimitKey,
+      PIN_IP_MAX_ATTEMPTS,
+      PIN_WINDOW_MS
+    );
 
     if (!userLimit.ok || !ipLimit.ok) {
       const retryAfter = Math.max(userLimit.retryAfter, ipLimit.retryAfter);
@@ -126,14 +136,13 @@ export async function POST(request: Request) {
         });
 
       if (insertError) {
-        return NextResponse.json(
-          { error: insertError.message },
-          { status: 500, headers: NO_STORE_HEADERS }
-        );
+        return dbErrorResponse('pin.insert', insertError, 500);
       }
 
-      resetRateLimit(userLimitKey);
-      resetRateLimit(ipLimitKey);
+      await Promise.all([
+        clearPinAttempts(admin, userLimitKey),
+        clearPinAttempts(admin, ipLimitKey),
+      ]);
 
       const res = NextResponse.json(
         { hasPin: true, isUnlocked: true },
@@ -177,17 +186,16 @@ export async function POST(request: Request) {
         .eq('user_id', user.id);
 
       if (updateError) {
-        return NextResponse.json(
-          { error: updateError.message },
-          { status: 500, headers: NO_STORE_HEADERS }
-        );
+        return dbErrorResponse('pin.change', updateError, 500);
       }
 
       pinSalt = salt;
     }
 
-    resetRateLimit(userLimitKey);
-    resetRateLimit(ipLimitKey);
+    await Promise.all([
+      clearPinAttempts(admin, userLimitKey),
+      clearPinAttempts(admin, ipLimitKey),
+    ]);
 
     const res = NextResponse.json(
       { hasPin: true, isUnlocked: true },
@@ -200,10 +208,7 @@ export async function POST(request: Request) {
     );
     return res;
   } catch (err) {
-    return NextResponse.json(
-      { error: err instanceof Error ? err.message : 'เกิดข้อผิดพลาด' },
-      { status: 500, headers: NO_STORE_HEADERS }
-    );
+    return serverErrorResponse('pin.post', err);
   }
 }
 
