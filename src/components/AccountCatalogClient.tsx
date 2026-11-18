@@ -31,6 +31,11 @@ function resolveAccountPlanMode(
   return getDefaultInstallmentMode(price);
 }
 
+function extractTrailingCodeNumber(code: string): number {
+  const match = code.trim().match(/(\d{1,4})$/);
+  return match ? Number(match[1]) : -1;
+}
+
 export default function AccountCatalogClient({
   accounts,
   initialAccounts,
@@ -65,6 +70,12 @@ export default function AccountCatalogClient({
         );
         const inDesc = (acc.description ?? '').toLowerCase().includes(q);
         return inCode || inTags || inDesc;
+      })
+      .sort((a, b) => {
+        const numDiff =
+          extractTrailingCodeNumber(b.code) - extractTrailingCodeNumber(a.code);
+        if (numDiff !== 0) return numDiff;
+        return b.code.localeCompare(a.code, undefined, { numeric: true });
       });
   }, [sourceAccounts, statusFilter, searchQuery, maxPrice]);
 

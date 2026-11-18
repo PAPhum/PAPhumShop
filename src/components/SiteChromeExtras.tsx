@@ -6,6 +6,7 @@ import { usePathname } from 'next/navigation';
 import {
   MessageCircle,
   ShieldCheck,
+  UserCheck,
   ArrowUpRight,
   Gamepad2,
   Image as ImageIcon,
@@ -13,6 +14,8 @@ import {
 
 const FACEBOOK_PROFILE_URL = 'https://www.facebook.com/phurinat.preedasuriyachai';
 const FACEBOOK_CREDIT_URL = 'https://www.facebook.com/share/1Gn515Xq7N/';
+const FACEBOOK_MIDDLEMAN_MAY_URL =
+  'https://www.facebook.com/profile.php?id=61594199001325&locale=th_TH';
 
 export default function SiteChromeExtras() {
   const pathname = usePathname() || '/store';
@@ -118,6 +121,17 @@ export default function SiteChromeExtras() {
           </div>
 
           <div className="flex flex-wrap items-center gap-2.5">
+            <a
+              href={FACEBOOK_MIDDLEMAN_MAY_URL}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex items-center gap-1.5 rounded-full border border-white/[0.12] bg-[#12141C] px-4 py-2 text-xs font-semibold text-zinc-200 transition-all active:scale-95 hover:border-[#93C5FD]/45 hover:text-[#93C5FD]"
+            >
+              <UserCheck className="h-3.5 w-3.5 text-[#93C5FD]" />
+              <span>ผ่านกลาง@เมย์ได้</span>
+              <ArrowUpRight className="h-3.5 w-3.5 opacity-70" />
+            </a>
+
             <a
               href={FACEBOOK_CREDIT_URL}
               target="_blank"
