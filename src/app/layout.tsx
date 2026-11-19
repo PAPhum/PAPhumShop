@@ -74,7 +74,9 @@ export default function RootLayout({
           <SiteChromeExtras />
         </Suspense>
 
-        <VisitorTracker />
+        <Suspense fallback={null}>
+          <VisitorTracker />
+        </Suspense>
       </body>
     </html>
   );
