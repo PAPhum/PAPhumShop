@@ -1,5 +1,5 @@
 import { Suspense } from 'react';
-import type { Metadata } from 'next';
+import type { Metadata, Viewport } from 'next';
 import { Plus_Jakarta_Sans, Noto_Sans_Thai } from 'next/font/google';
 import './globals.css';
 import Navbar from '@/components/Navbar';
@@ -19,15 +19,21 @@ const notoSansThai = Noto_Sans_Thai({
   display: 'swap',
 });
 
+export const viewport: Viewport = {
+  colorScheme: 'dark',
+  themeColor: '#08090D',
+};
+
 export const metadata: Metadata = {
   metadataBase: new URL(
     process.env.NEXT_PUBLIC_SITE_URL ?? 'https://paphumshop.vercel.app'
   ),
   title: 'PAPhum | รับซื้อ ขาย ทำป้ายRoV',
   description: 'RoV by PAPhum ผ่อน-ผ่านกลางได้และรับทำป้ายขายไอดีงานไวม้าก',
+  other: {
+    'color-scheme': 'dark',
+  },
 };
-
-
 
 export default function RootLayout({
   children,
@@ -37,6 +43,7 @@ export default function RootLayout({
   return (
     <html
       lang="th"
+      style={{ colorScheme: 'dark' }}
       className={`${jakarta.variable} ${notoSansThai.variable} dark`}
     >
       <body className="flex min-h-screen flex-col bg-[#08090D] font-sans text-[#F1F5F9] antialiased selection:bg-[#93C5FD]/25 selection:text-[#F1F5F9]">
@@ -50,7 +57,11 @@ export default function RootLayout({
           <div className="bg-dot-matrix absolute inset-0 opacity-45" />
         </div>
 
-        <Suspense fallback={<div className="h-14 border-b border-white/[0.08] bg-[#08090D]/65 sm:h-16" />}>
+        <Suspense
+          fallback={
+            <div className="h-14 border-b border-white/[0.08] bg-[#08090D]/95 sm:h-16" />
+          }
+        >
           <Navbar />
         </Suspense>
 

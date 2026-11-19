@@ -61,7 +61,6 @@ export async function POST(req: NextRequest) {
       code,
       status,
       price: priceNum,
-      cost: 0,
       min_down_weekly: Math.max(0, Math.trunc(Number(body.min_down_weekly) || 0)),
       min_down_monthly: Math.max(0, Math.trunc(Number(body.min_down_monthly) || 0)),
       interest_free_weeks: Math.max(0, Math.trunc(Number(body.interest_free_weeks) || 0)),
@@ -70,23 +69,15 @@ export async function POST(req: NextRequest) {
       description: body.description ? String(body.description) : null,
       main_image_url: mainImageUrl,
       gallery_urls: Array.isArray(body.gallery_urls) ? body.gallery_urls : [],
-      game_uid_enc: null,
-      login_provider_enc: null,
-      username_enc: null,
-      password_enc: null,
-      authenticator_enc: null,
-      gmail_enc: null,
-      gmail_password_enc: null,
-      gmail_authenticator_enc: null,
-      gmail_recovery_enc: null,
-      private_notes_enc: null,
       updated_at: now,
     };
 
     const { data: created, error: insertError } = await supabase
       .from('accounts')
       .insert(insertData)
-      .select('id, code, status, price, min_down_weekly, min_down_monthly, interest_free_weeks, interest_free_months, tags, description, main_image_url, gallery_urls, created_at, updated_at')
+      .select(
+        'id, code, status, price, min_down_weekly, min_down_monthly, interest_free_weeks, interest_free_months, tags, description, main_image_url, gallery_urls, created_at, updated_at'
+      )
       .single();
 
     if (insertError || !created) {

@@ -91,7 +91,6 @@ export async function PATCH(
       code,
       status,
       price: priceNum,
-      cost: 0,
       min_down_weekly: Math.max(0, Math.trunc(Number(body.min_down_weekly) || 0)),
       min_down_monthly: Math.max(0, Math.trunc(Number(body.min_down_monthly) || 0)),
       interest_free_weeks: Math.max(0, Math.trunc(Number(body.interest_free_weeks) || 0)),

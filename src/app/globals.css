@@ -1,4 +1,5 @@
 @import "tailwindcss";
+@custom-variant dark (&:where(.dark, .dark *));
 
 @theme inline {
   --font-sans: var(--font-sans-en), var(--font-sans-th), -apple-system, BlinkMacSystemFont, sans-serif;
@@ -6,7 +7,19 @@
   --font-mono: var(--font-sans-en), var(--font-sans-th), sans-serif;
 }
 
+:root {
+  color-scheme: dark;
+  supported-color-schemes: dark;
+}
+
 @layer base {
+  html,
+  body {
+    color-scheme: dark;
+    background-color: #08090D;
+    color: #F1F5F9;
+  }
+
   body {
     font-family: var(--font-sans-en), var(--font-sans-th), -apple-system, BlinkMacSystemFont, sans-serif;
     font-feature-settings: "cv02", "cv03", "cv04", "cv11";
