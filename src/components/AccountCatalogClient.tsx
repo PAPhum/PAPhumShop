@@ -19,7 +19,7 @@ interface AccountCatalogClientProps {
   initialAccounts?: StoreAccount[];
 }
 
-type PublicStatusFilter = 'ALL' | 'Available' | 'Installment' | 'SoldOut';
+type PublicStatusFilter = 'Available' | 'Installment' | 'SoldOut';
 
 const HIDDEN_PLAN_TAGS = new Set(['ผ่อนรายสัปดาห์', 'ผ่อนรายเดือน']);
 
@@ -51,7 +51,6 @@ export default function AccountCatalogClient({
     [accounts, initialAccounts]
   );
 
-  // ค่าเริ่มต้นของ /store คือ "พร้อมขาย" (Available)
   const [statusFilter, setStatusFilter] =
     useState<PublicStatusFilter>('Available');
   const [searchQuery, setSearchQuery] = useState('');
@@ -64,7 +63,7 @@ export default function AccountCatalogClient({
 
     return sourceAccounts
       .filter((acc) => {
-        if (statusFilter !== 'ALL' && acc.status !== statusFilter) {
+        if (acc.status !== statusFilter) {
           return false;
         }
         if (priceCap > 0 && acc.price > priceCap) {
@@ -88,7 +87,6 @@ export default function AccountCatalogClient({
 
   const counts = useMemo(() => {
     return {
-      ALL: sourceAccounts.length,
       Available: sourceAccounts.filter((a) => a.status === 'Available').length,
       Installment: sourceAccounts.filter((a) => a.status === 'Installment')
         .length,
@@ -175,7 +173,6 @@ export default function AccountCatalogClient({
           {(
             [
               { key: 'Available', label: 'พร้อมขาย' },
-              { key: 'ALL', label: 'ทั้งหมด' },
               { key: 'Installment', label: 'ติดผ่อน' },
               { key: 'SoldOut', label: 'ขายแล้ว' },
             ] as const

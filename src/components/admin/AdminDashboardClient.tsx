@@ -89,7 +89,7 @@ export default function AdminDashboardClient({
     [settings]
   );
 
-  const [statusFilter, setStatusFilter] = useState<'ALL' | AccountStatus>('ALL');
+  const [statusFilter, setStatusFilter] = useState<AccountStatus>('Available');
   const [searchQuery, setSearchQuery] = useState<string>('');
 
   const [formModalOpen, setFormModalOpen] = useState<boolean>(false);
@@ -107,7 +107,7 @@ export default function AdminDashboardClient({
   const filteredAccounts = useMemo(() => {
     const q = searchQuery.trim().toLowerCase();
     return accounts.filter((acc) => {
-      if (statusFilter !== 'ALL' && acc.status !== statusFilter) {
+      if (acc.status !== statusFilter) {
         return false;
       }
       if (!q) return true;
@@ -355,7 +355,6 @@ export default function AdminDashboardClient({
             <div className="flex items-center gap-1.5 overflow-x-auto pb-0.5 no-scrollbar">
               {(
                 [
-                  { key: 'ALL', label: 'ทั้งหมด' },
                   { key: 'Available', label: 'Available' },
                   { key: 'Installment', label: 'Installment' },
                   { key: 'SoldOut', label: 'SoldOut' },

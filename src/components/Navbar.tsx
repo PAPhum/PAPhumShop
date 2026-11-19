@@ -15,7 +15,7 @@ export default function Navbar() {
     pathname.startsWith('/id/');
 
   return (
-    <header className="sticky top-0 z-40 border-b border-white/[0.08] bg-[#08090D]/65 backdrop-blur-xl supports-[backdrop-filter]:bg-[#08090D]/55">
+    <header className="sticky top-0 z-40 border-b border-white/[0.08] bg-[#08090D]/95 backdrop-blur-xl">
       <div
         aria-hidden="true"
         className="pointer-events-none absolute inset-x-0 bottom-0 h-px bg-gradient-to-r from-transparent via-[#93C5FD]/25 to-transparent"
