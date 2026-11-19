@@ -4,6 +4,7 @@ import { Plus_Jakarta_Sans, Noto_Sans_Thai } from 'next/font/google';
 import './globals.css';
 import Navbar from '@/components/Navbar';
 import SiteChromeExtras from '@/components/SiteChromeExtras';
+import VisitorTracker from '@/components/VisitorTracker';
 
 const jakarta = Plus_Jakarta_Sans({
   subsets: ['latin'],
@@ -72,6 +73,8 @@ export default function RootLayout({
         <Suspense fallback={null}>
           <SiteChromeExtras />
         </Suspense>
+
+        <VisitorTracker />
       </body>
     </html>
   );

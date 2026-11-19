@@ -871,25 +871,28 @@ export default function AccountFormModal({
                 </div>
 
                 {galleryUrls.length > 0 && (
-                  <div className="mb-2 flex flex-wrap gap-2">
-                    {galleryUrls.map((url, idx) => (
-                      <div key={`gal-${idx}`} className="relative h-14 w-14">
-                        <img
-                          src={url}
-                          alt="รูปเสริม"
-                          className="h-full w-full rounded-md border border-white/[0.1] object-cover"
-                        />
-                        <button
-                          type="button"
-                          onClick={() =>
-                            setGalleryUrls((prev) => prev.filter((_, i) => i !== idx))
-                          }
-                          className="absolute -right-1.5 -top-1.5 rounded-full bg-red-600 p-0.5 text-white"
-                        >
-                          <Trash2 className="h-3 w-3" />
-                        </button>
-                      </div>
-                    ))}
+                  <div className="mb-2.5 max-h-56 overflow-y-auto overscroll-contain rounded-lg border border-white/[0.08] bg-[#111216] p-2">
+                    <div className="grid grid-cols-4 gap-2 sm:grid-cols-5">
+                      {galleryUrls.map((url, idx) => (
+                        <div key={`gal-${idx}`} className="relative aspect-square w-full">
+                          <img
+                            src={url}
+                            alt={`รูปเสริม ${idx + 1}`}
+                            className="h-full w-full rounded-md border border-white/[0.1] object-cover"
+                          />
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setGalleryUrls((prev) => prev.filter((_, i) => i !== idx))
+                            }
+                            aria-label="ลบรูปนี้"
+                            className="absolute -right-1 -top-1 rounded-full bg-red-600 p-0.5 text-white shadow"
+                          >
+                            <Trash2 className="h-3 w-3" />
+                          </button>
+                        </div>
+                      ))}
+                    </div>
                   </div>
                 )}
 

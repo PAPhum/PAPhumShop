@@ -9,6 +9,7 @@ import {
   LayoutGrid,
   Image as ImageIcon,
   Sliders,
+  Activity,
   Edit3,
   Trash2,
   CalendarClock,
@@ -28,6 +29,7 @@ import AccountFormModal from './AccountFormModal';
 import BannerCategoryManager from './BannerCategoryManager';
 import BannerBulkUploader from './BannerBulkUploader';
 import ScheduleGeneratorModal from './ScheduleGeneratorModal';
+import VisitorLogsPanel from './VisitorLogsPanel';
 
 interface AdminDashboardClientProps {
   username: string;
@@ -37,7 +39,7 @@ interface AdminDashboardClientProps {
   initialSettings: InstallmentSettings;
 }
 
-type AdminTab = 'accounts' | 'banners' | 'settings';
+type AdminTab = 'accounts' | 'banners' | 'settings' | 'logs';
 
 const STATUS_BADGE_STYLES: Record<AccountStatus, string> = {
   Available: 'border-[#93C5FD]/35 bg-[#93C5FD]/15 text-[#93C5FD]',
@@ -291,6 +293,22 @@ export default function AdminDashboardClient({
           >
             <Sliders className="h-3.5 w-3.5" />
             <span>ตั้งค่าผ่อน</span>
+          </button>
+        )}
+
+        {isOwner && (
+          <button
+            type="button"
+            onClick={() => setActiveTab('logs')}
+            title="สถิติและ Log ผู้เข้าชม"
+            aria-label="สถิติและ Log ผู้เข้าชม"
+            className={`inline-flex items-center justify-center rounded-full p-2.5 text-xs font-semibold transition-all active:scale-95 ${
+              activeTab === 'logs'
+                ? 'bg-[#F1F5F9] text-[#090B10] shadow-sm'
+                : 'border border-white/[0.09] bg-[#12141C] text-zinc-300 hover:text-white'
+            }`}
+          >
+            <Activity className="h-3.5 w-3.5" />
           </button>
         )}
       </div>
@@ -599,6 +617,9 @@ export default function AdminDashboardClient({
           </div>
         </form>
       )}
+
+      {/* แท็บที่ 4: สถิติและ Log ผู้เข้าชม */}
+      {isOwner && activeTab === 'logs' && <VisitorLogsPanel />}
 
       {/* Modal เพิ่ม / แก้ไขข้อมูลไอดี */}
       {formModalOpen && (
