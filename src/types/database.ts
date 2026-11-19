@@ -1,5 +1,6 @@
-export type AccountStatus = 'Unavailable' | 'Available' | 'Installment' | 'SoldOut';
 export type AdminRole = 'owner' | 'staff';
+
+export type AccountStatus = 'Available' | 'Installment' | 'SoldOut';
 
 export interface AccountPublic {
   id: string;
@@ -18,35 +19,7 @@ export interface AccountPublic {
   updated_at: string;
 }
 
-export type StoreAccount = Pick<
-  AccountPublic,
-  | 'id'
-  | 'code'
-  | 'status'
-  | 'price'
-  | 'min_down_weekly'
-  | 'min_down_monthly'
-  | 'tags'
-  | 'description'
-  | 'main_image_url'
-  | 'created_at'
->;
-
-export interface AccountSecretDecrypted {
-  cost: number;
-  purchase_date?: string;
-  phone_owner?: string;
-  game_uid: string;
-  login_provider: string;
-  username: string;
-  password: string;
-  authenticator: string;
-  gmail: string;
-  gmail_password: string;
-  gmail_authenticator: string;
-  gmail_recovery: string;
-  private_notes: string;
-}
+export type StoreAccount = AccountPublic;
 
 export interface BannerCategory {
   id: string;
@@ -56,6 +29,7 @@ export interface BannerCategory {
   logo_url: string | null;
   sort_order: number;
   hide_preview?: boolean;
+  created_at: string;
 }
 
 export interface BannerItem {
@@ -77,7 +51,7 @@ export interface BannerCategorySection extends BannerCategory {
   total_count: number;
 }
 
-export interface DeliveryItem {
+export interface DeliveryRecord {
   id: string;
   token: string;
   banner_id: string | null;
@@ -86,6 +60,8 @@ export interface DeliveryItem {
   expires_at: string;
   created_at: string;
 }
+
+export type DeliveryItem = DeliveryRecord;
 
 export interface InstallmentSettings {
   id: number;

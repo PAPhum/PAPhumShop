@@ -6,12 +6,9 @@ import {
   Upload,
   Trash2,
   Loader2,
-  Calendar,
-  Phone,
 } from 'lucide-react';
 import {
   AccountPublic,
-  AccountSecretDecrypted,
   AccountStatus,
   InstallmentSettings,
 } from '@/types/database';
@@ -53,14 +50,6 @@ function splitDayMonth(rawDate: string): { day: string; month: string } {
     day: digits.slice(0, 2),
     month: digits.slice(2, 4),
   };
-}
-
-function getTodayIsoDate(): string {
-  const now = new Date();
-  const y = now.getFullYear();
-  const m = String(now.getMonth() + 1).padStart(2, '0');
-  const d = String(now.getDate()).padStart(2, '0');
-  return `${y}-${m}-${d}`;
 }
 
 function parseBindingTags(tags: string[], fallbackPrice: number) {
@@ -174,9 +163,7 @@ export default function AccountFormModal({
   editingAccount,
   defaultSettings,
 }: AccountFormModalProps) {
-  const [loadingSecret, setLoadingSecret] = useState(false);
   const [saving, setSaving] = useState(false);
-
   const [uploadingMain, setUploadingMain] = useState(false);
   const [galleryProgress, setGalleryProgress] = useState<{
     done: number;
@@ -189,12 +176,10 @@ export default function AccountFormModal({
   const mailMonthInputRef = useRef<HTMLInputElement | null>(null);
 
   const [code, setCode] = useState('');
-  const [status, setStatus] = useState<AccountStatus>('Unavailable');
+  const [status, setStatus] = useState<AccountStatus>('Available');
   const [price, setPrice] = useState('');
-  const [cost, setCost] = useState('');
-  const [purchaseDate, setPurchaseDate] = useState(getTodayIsoDate());
 
-  // รูปแบบและเงื่อนไขผ่อน (แอดมินเลือกเอง)
+  // รูปแบบและเงื่อนไขผ่อน
   const [installmentMode, setInstallmentMode] =
     useState<InstallmentPlanMode>('weekly');
   const [modeManuallyPicked, setModeManuallyPicked] = useState(false);
@@ -216,7 +201,6 @@ export default function AccountFormModal({
   const [phoneState, setPhoneState] = useState<PhoneBindState>('พร้อมเปลี่ยน');
   const [phoneDay, setPhoneDay] = useState('');
   const [phoneMonth, setPhoneMonth] = useState('');
-  const [phoneOwner, setPhoneOwner] = useState('');
 
   const [mailState, setMailState] = useState<MailBindState>('พร้อมยก');
   const [mailDay, setMailDay] = useState('');
@@ -238,10 +222,8 @@ export default function AccountFormModal({
 
     if (!editingAccount) {
       setCode('');
-      setStatus('Unavailable');
+      setStatus('Available');
       setPrice('');
-      setCost('');
-      setPurchaseDate(getTodayIsoDate());
       setInstallmentMode('weekly');
       setModeManuallyPicked(false);
       setMinDownWeekly(String(defaultSettings.default_min_down_weekly ?? 1000));
@@ -251,7 +233,6 @@ export default function AccountFormModal({
       setPhoneState('พร้อมเปลี่ยน');
       setPhoneDay('');
       setPhoneMonth('');
-      setPhoneOwner('');
       setMailState('พร้อมยก');
       setMailDay('');
       setMailMonth('');
@@ -312,19 +293,6 @@ export default function AccountFormModal({
     setDescription(editingAccount.description ?? '');
     setMainImageUrl(editingAccount.main_image_url ?? '');
     setGalleryUrls(editingAccount.gallery_urls ?? []);
-
-    setLoadingSecret(true);
-    fetch(`/api/admin/accounts/${editingAccount.id}`)
-      .then(async (res) => {
-        const data = await res.json();
-        if (!res.ok) throw new Error(data.error ?? 'โหลดข้อมูลต้นทุนไม่สำเร็จ');
-        const sec = data.secret as AccountSecretDecrypted;
-        setCost(sec.cost ? String(sec.cost) : '');
-        setPurchaseDate(sec.purchase_date || getTodayIsoDate());
-        setPhoneOwner(sec.phone_owner ?? '');
-      })
-      .catch((err) => setError(err.message))
-      .finally(() => setLoadingSecret(false));
   }, [isOpen, editingAccount, defaultSettings]);
 
   if (!isOpen) return null;
@@ -382,8 +350,8 @@ export default function AccountFormModal({
       return;
     }
 
-    if (status !== 'Unavailable' && !mainImageUrl) {
-      setError('สถานะ Available / Installment / SoldOut ต้องอัปโหลดรูปป้ายหลักก่อน');
+    if (!mainImageUrl) {
+      setError('กรุณาอัปโหลดรูปป้ายหลักก่อนบันทึก');
       return;
     }
 
@@ -437,16 +405,13 @@ export default function AccountFormModal({
           code: code.trim(),
           status,
           price: Number(price) || 0,
-          cost: Number(cost) || 0,
           min_down_weekly: Math.max(0, Number(minDownWeekly) || 0),
           min_down_monthly: Math.max(0, Number(minDownMonthly) || 0),
           interest_free_weeks: Math.max(0, Number(interestFreeWeeks) || 0),
           interest_free_months: Math.max(0, Number(interestFreeMonths) || 0),
-          purchase_date: purchaseDate,
-          phone_owner: phoneState === 'ไม่ติด' ? '' : phoneOwner.trim(),
           tags,
           description,
-          main_image_url: mainImageUrl || null,
+          main_image_url: mainImageUrl,
           gallery_urls: galleryUrls,
         }),
       });
@@ -498,546 +463,501 @@ export default function AccountFormModal({
             </button>
           </div>
 
-          {loadingSecret ? (
-            <div className="flex items-center justify-center gap-2 py-12 text-xs text-zinc-400">
-              <Loader2 className="h-4 w-4 animate-spin text-[#93C5FD]" />
-              <span>กำลังโหลดข้อมูล...</span>
-            </div>
-          ) : (
-            <form onSubmit={handleSubmit} autoComplete="off" className="space-y-4">
-              {/* แถวที่ 1: รหัสไอดี / สถานะ / ราคาขาย / ต้นทุน / วันที่ซื้อ */}
-              <div className="space-y-3 rounded-xl border border-white/[0.07] bg-[#0A0A0D] p-3.5">
-                <div className="grid grid-cols-2 gap-3 sm:grid-cols-5">
-                  <div>
-                    <label className="mb-1 block text-xs text-zinc-400">รหัสไอดี</label>
-                    <input
-                      type="text"
-                      required
-                      placeholder="PM0001"
-                      value={code}
-                      onChange={(e) => setCode(e.target.value)}
-                      className="w-full rounded-lg border border-white/[0.1] bg-[#111216] px-3 py-2 font-[family-name:var(--font-mono)] text-sm text-[#F1F5F9] focus:border-[#93C5FD]/60 focus:outline-none"
-                    />
-                  </div>
-
-                  <div>
-                    <label className="mb-1 block text-xs text-zinc-400">สถานะ</label>
-                    <select
-                      value={status}
-                      onChange={(e) => setStatus(e.target.value as AccountStatus)}
-                      className="w-full rounded-lg border border-white/[0.1] bg-[#111216] px-2.5 py-2 font-[family-name:var(--font-mono)] text-xs text-[#F1F5F9] focus:border-[#93C5FD]/60 focus:outline-none sm:text-sm"
-                    >
-                      <option value="Unavailable">Unavailable</option>
-                      <option value="Available">Available</option>
-                      <option value="Installment">Installment</option>
-                      <option value="SoldOut">SoldOut</option>
-                    </select>
-                  </div>
-
-                  <div>
-                    <label className="mb-1 block text-xs text-zinc-400">
-                      ราคาขาย (เว้นว่างได้)
-                    </label>
-                    <input
-                      type="number"
-                      placeholder="0"
-                      value={price}
-                      onChange={(e) => handlePriceChange(e.target.value)}
-                      className="w-full rounded-lg border border-white/[0.1] bg-[#111216] px-3 py-2 font-[family-name:var(--font-mono)] text-sm font-semibold text-[#93C5FD] placeholder:text-zinc-600 focus:border-[#93C5FD]/60 focus:outline-none"
-                    />
-                  </div>
-
-                  <div>
-                    <label className="mb-1 block text-xs text-zinc-400">ต้นทุน</label>
-                    <input
-                      type="number"
-                      placeholder="0"
-                      value={cost}
-                      onChange={(e) => setCost(e.target.value)}
-                      className="w-full rounded-lg border border-white/[0.1] bg-[#111216] px-3 py-2 font-[family-name:var(--font-mono)] text-sm text-zinc-300 placeholder:text-zinc-600 focus:border-[#93C5FD]/60 focus:outline-none"
-                    />
-                  </div>
-
-                  <div className="col-span-2 sm:col-span-1">
-                    <label className="mb-1 flex items-center gap-1 text-xs text-zinc-400">
-                      <Calendar className="h-3 w-3 text-[#93C5FD]" />
-                      <span>วันที่ซื้อไอดี</span>
-                    </label>
-                    <input
-                      type="date"
-                      value={purchaseDate}
-                      onChange={(e) => setPurchaseDate(e.target.value)}
-                      className="w-full rounded-lg border border-white/[0.1] bg-[#111216] px-2.5 py-2 text-xs text-[#F1F5F9] focus:border-[#93C5FD]/60 focus:outline-none"
-                    />
-                  </div>
+          <form onSubmit={handleSubmit} autoComplete="off" className="space-y-4">
+            {/* แถวที่ 1: รหัสไอดี / สถานะ / ราคาขาย */}
+            <div className="space-y-3 rounded-xl border border-white/[0.07] bg-[#0A0A0D] p-3.5">
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+                <div>
+                  <label className="mb-1 block text-xs text-zinc-400">รหัสไอดี</label>
+                  <input
+                    type="text"
+                    required
+                    placeholder="PM0001"
+                    value={code}
+                    onChange={(e) => setCode(e.target.value)}
+                    className="w-full rounded-lg border border-white/[0.1] bg-[#111216] px-3 py-2 font-[family-name:var(--font-mono)] text-sm text-[#F1F5F9] focus:border-[#93C5FD]/60 focus:outline-none"
+                  />
                 </div>
 
-                {/* เลือกรูปแบบและเงื่อนไขผ่อนของไอดีนี้ */}
-                <div className="rounded-lg border border-white/[0.06] bg-[#111216]/70 p-2.5">
-                  <div className="mb-2.5 flex flex-wrap items-center justify-between gap-2">
-                    <div className="flex items-center gap-1.5">
-                      <span className="text-[11px] font-medium text-zinc-300">
-                        รูปแบบการผ่อน:
-                      </span>
-                      {(
-                        [
-                          { id: 'weekly', label: 'ผ่อนรายสัปดาห์' },
-                          { id: 'monthly', label: 'ผ่อนรายเดือน' },
-                        ] as const
-                      ).map((opt) => (
-                        <button
-                          key={opt.id}
-                          type="button"
-                          onClick={() => {
-                            setInstallmentMode(opt.id);
-                            setModeManuallyPicked(true);
-                          }}
-                          className={`rounded-md px-2.5 py-1 text-xs font-semibold transition-colors ${
-                            installmentMode === opt.id
-                              ? 'bg-[#F1F5F9] text-[#0A0A0D]'
-                              : 'border border-white/[0.1] bg-[#0A0A0D] text-zinc-400 hover:text-zinc-200'
-                          }`}
-                        >
-                          {opt.label}
-                        </button>
-                      ))}
-                    </div>
+                <div>
+                  <label className="mb-1 block text-xs text-zinc-400">สถานะ</label>
+                  <select
+                    value={status}
+                    onChange={(e) => setStatus(e.target.value as AccountStatus)}
+                    className="w-full rounded-lg border border-white/[0.1] bg-[#111216] px-2.5 py-2 font-[family-name:var(--font-mono)] text-xs text-[#F1F5F9] focus:border-[#93C5FD]/60 focus:outline-none sm:text-sm"
+                  >
+                    <option value="Available">Available</option>
+                    <option value="Installment">Installment</option>
+                    <option value="SoldOut">SoldOut</option>
+                  </select>
+                </div>
 
-                    <span className="text-[11px] text-zinc-500">
-                      กำหนดเงื่อนไขผ่อนเฉพาะไอดีนี้ได้เอง
-                    </span>
-                  </div>
-
-                  {installmentMode === 'weekly' ? (
-                    <div className="grid grid-cols-2 gap-2.5">
-                      <div>
-                        <label className="mb-1 block text-[11px] text-zinc-400">
-                          ดาวน์ขั้นต่ำ (รายสัปดาห์)
-                        </label>
-                        <input
-                          type="number"
-                          min={0}
-                          step={100}
-                          value={minDownWeekly}
-                          onChange={(e) => setMinDownWeekly(e.target.value)}
-                          className="w-full rounded-md border border-white/[0.1] bg-[#0A0A0D] px-2.5 py-1.5 font-[family-name:var(--font-mono)] text-xs text-[#F1F5F9] focus:border-[#93C5FD]/60 focus:outline-none"
-                        />
-                      </div>
-
-                      <div>
-                        <label className="mb-1 block text-[11px] text-zinc-400">
-                          ปลอดดอก (กี่สัปดาห์)
-                        </label>
-                        <input
-                          type="number"
-                          min={0}
-                          max={52}
-                          value={interestFreeWeeks}
-                          onChange={(e) => setInterestFreeWeeks(e.target.value)}
-                          className="w-full rounded-md border border-white/[0.1] bg-[#0A0A0D] px-2.5 py-1.5 font-[family-name:var(--font-mono)] text-xs font-semibold text-[#93C5FD] focus:border-[#93C5FD]/60 focus:outline-none"
-                        />
-                      </div>
-                    </div>
-                  ) : (
-                    <div className="grid grid-cols-2 gap-2.5">
-                      <div>
-                        <label className="mb-1 block text-[11px] text-zinc-400">
-                          ดาวน์ขั้นต่ำ (รายเดือน)
-                        </label>
-                        <input
-                          type="number"
-                          min={0}
-                          step={100}
-                          value={minDownMonthly}
-                          onChange={(e) => setMinDownMonthly(e.target.value)}
-                          className="w-full rounded-md border border-white/[0.1] bg-[#0A0A0D] px-2.5 py-1.5 font-[family-name:var(--font-mono)] text-xs text-[#F1F5F9] focus:border-[#93C5FD]/60 focus:outline-none"
-                        />
-                      </div>
-
-                      <div>
-                        <label className="mb-1 block text-[11px] text-zinc-400">
-                          ปลอดดอก (กี่เดือน)
-                        </label>
-                        <input
-                          type="number"
-                          min={0}
-                          max={24}
-                          value={interestFreeMonths}
-                          onChange={(e) => setInterestFreeMonths(e.target.value)}
-                          className="w-full rounded-md border border-white/[0.1] bg-[#0A0A0D] px-2.5 py-1.5 font-[family-name:var(--font-mono)] text-xs font-semibold text-[#93C5FD] focus:border-[#93C5FD]/60 focus:outline-none"
-                        />
-                      </div>
-                    </div>
-                  )}
+                <div>
+                  <label className="mb-1 block text-xs text-zinc-400">
+                    ราคาขาย (บาท)
+                  </label>
+                  <input
+                    type="number"
+                    placeholder="0"
+                    value={price}
+                    onChange={(e) => handlePriceChange(e.target.value)}
+                    className="w-full rounded-lg border border-white/[0.1] bg-[#111216] px-3 py-2 font-[family-name:var(--font-mono)] text-sm font-semibold text-[#93C5FD] placeholder:text-zinc-600 focus:border-[#93C5FD]/60 focus:outline-none"
+                  />
                 </div>
               </div>
 
-              {/* แถวที่ 2: ข้อมูลผูกบัญชี */}
-              <div className="space-y-3 rounded-xl border border-white/[0.07] bg-[#0A0A0D] p-3.5">
-                <span className="block text-xs font-semibold text-zinc-300">
-                  ข้อมูลผูกบัญชี
-                </span>
+              {/* เลือกรูปแบบและเงื่อนไขผ่อนของไอดีนี้ */}
+              <div className="rounded-lg border border-white/[0.06] bg-[#111216]/70 p-2.5">
+                <div className="mb-2.5 flex flex-wrap items-center justify-between gap-2">
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-[11px] font-medium text-zinc-300">
+                      รูปแบบการผ่อน:
+                    </span>
+                    {(
+                      [
+                        { id: 'weekly', label: 'ผ่อนรายสัปดาห์' },
+                        { id: 'monthly', label: 'ผ่อนรายเดือน' },
+                      ] as const
+                    ).map((opt) => (
+                      <button
+                        key={opt.id}
+                        type="button"
+                        onClick={() => {
+                          setInstallmentMode(opt.id);
+                          setModeManuallyPicked(true);
+                        }}
+                        className={`rounded-md px-2.5 py-1 text-xs font-semibold transition-colors ${
+                          installmentMode === opt.id
+                            ? 'bg-[#F1F5F9] text-[#0A0A0D]'
+                            : 'border border-white/[0.1] bg-[#0A0A0D] text-zinc-400 hover:text-zinc-200'
+                        }`}
+                      >
+                        {opt.label}
+                      </button>
+                    ))}
+                  </div>
 
-                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-                  {/* เบอร์ + เจ้าของเบอร์ */}
-                  <div className="space-y-2 rounded-lg border border-white/[0.06] bg-[#111216]/60 p-2.5">
-                    <label className="block text-[11px] text-zinc-400">เบอร์</label>
-                    <div className="flex flex-wrap items-center gap-1.5">
-                      {(
-                        ['พร้อมเปลี่ยน', 'รอเปลี่ยน', 'ไม่ติด'] as PhoneBindState[]
-                      ).map((opt) => (
-                        <button
-                          key={opt}
-                          type="button"
-                          onClick={() => setPhoneState(opt)}
-                          className={`rounded-md px-2.5 py-1 text-xs font-medium transition-colors ${
-                            phoneState === opt
-                              ? 'bg-[#F1F5F9] text-[#0A0A0D]'
-                              : 'border border-white/[0.1] bg-[#0A0A0D] text-zinc-400 hover:text-zinc-200'
-                          }`}
-                        >
-                          {opt}
-                        </button>
-                      ))}
+                  <span className="text-[11px] text-zinc-500">
+                    กำหนดเงื่อนไขผ่อนเฉพาะไอดีนี้ได้เอง
+                  </span>
+                </div>
 
-                      {phoneState === 'รอเปลี่ยน' && (
-                        <div className="inline-flex items-center rounded-md border border-[#93C5FD]/45 bg-[#0A0A0D] px-1.5 py-0.5 font-[family-name:var(--font-mono)] text-xs text-[#F1F5F9]">
-                          <input
-                            type="text"
-                            inputMode="numeric"
-                            maxLength={2}
-                            placeholder="วว"
-                            value={phoneDay}
-                            onChange={(e) => {
-                              const val = e.target.value.replace(/\D/g, '').slice(0, 2);
-                              setPhoneDay(val);
-                              if (val.length === 2) {
-                                phoneMonthInputRef.current?.focus();
-                              }
-                            }}
-                            className="w-6 bg-transparent text-center placeholder:text-zinc-600 focus:outline-none"
-                          />
-                          <span className="text-zinc-500">/</span>
-                          <input
-                            ref={phoneMonthInputRef}
-                            type="text"
-                            inputMode="numeric"
-                            maxLength={2}
-                            placeholder="ดด"
-                            value={phoneMonth}
-                            onChange={(e) => {
-                              const val = e.target.value.replace(/\D/g, '').slice(0, 2);
-                              setPhoneMonth(val);
-                            }}
-                            onKeyDown={(e) => {
-                              if (e.key === 'Backspace' && phoneMonth === '') {
-                                const prev = e.currentTarget.previousElementSibling
-                                  ?.previousElementSibling as HTMLInputElement | null;
-                                prev?.focus();
-                              }
-                            }}
-                            className="w-6 bg-transparent text-center placeholder:text-zinc-600 focus:outline-none"
-                          />
-                        </div>
-                      )}
+                {installmentMode === 'weekly' ? (
+                  <div className="grid grid-cols-2 gap-2.5">
+                    <div>
+                      <label className="mb-1 block text-[11px] text-zinc-400">
+                        ดาวน์ขั้นต่ำ (รายสัปดาห์)
+                      </label>
+                      <input
+                        type="number"
+                        min={0}
+                        step={100}
+                        value={minDownWeekly}
+                        onChange={(e) => setMinDownWeekly(e.target.value)}
+                        className="w-full rounded-md border border-white/[0.1] bg-[#0A0A0D] px-2.5 py-1.5 font-[family-name:var(--font-mono)] text-xs text-[#F1F5F9] focus:border-[#93C5FD]/60 focus:outline-none"
+                      />
                     </div>
 
-                    {phoneState !== 'ไม่ติด' && (
-                      <div className="relative pt-0.5">
-                        <Phone className="pointer-events-none absolute left-2.5 top-1/2 h-3 w-3 -translate-y-1/2 text-zinc-500" />
+                    <div>
+                      <label className="mb-1 block text-[11px] text-zinc-400">
+                        ปลอดดอก (กี่สัปดาห์)
+                      </label>
+                      <input
+                        type="number"
+                        min={0}
+                        max={52}
+                        value={interestFreeWeeks}
+                        onChange={(e) => setInterestFreeWeeks(e.target.value)}
+                        className="w-full rounded-md border border-white/[0.1] bg-[#0A0A0D] px-2.5 py-1.5 font-[family-name:var(--font-mono)] text-xs font-semibold text-[#93C5FD] focus:border-[#93C5FD]/60 focus:outline-none"
+                      />
+                    </div>
+                  </div>
+                ) : (
+                  <div className="grid grid-cols-2 gap-2.5">
+                    <div>
+                      <label className="mb-1 block text-[11px] text-zinc-400">
+                        ดาวน์ขั้นต่ำ (รายเดือน)
+                      </label>
+                      <input
+                        type="number"
+                        min={0}
+                        step={100}
+                        value={minDownMonthly}
+                        onChange={(e) => setMinDownMonthly(e.target.value)}
+                        className="w-full rounded-md border border-white/[0.1] bg-[#0A0A0D] px-2.5 py-1.5 font-[family-name:var(--font-mono)] text-xs text-[#F1F5F9] focus:border-[#93C5FD]/60 focus:outline-none"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="mb-1 block text-[11px] text-zinc-400">
+                        ปลอดดอก (กี่เดือน)
+                      </label>
+                      <input
+                        type="number"
+                        min={0}
+                        max={24}
+                        value={interestFreeMonths}
+                        onChange={(e) => setInterestFreeMonths(e.target.value)}
+                        className="w-full rounded-md border border-white/[0.1] bg-[#0A0A0D] px-2.5 py-1.5 font-[family-name:var(--font-mono)] text-xs font-semibold text-[#93C5FD] focus:border-[#93C5FD]/60 focus:outline-none"
+                      />
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* แถวที่ 2: ข้อมูลผูกบัญชี */}
+            <div className="space-y-3 rounded-xl border border-white/[0.07] bg-[#0A0A0D] p-3.5">
+              <span className="block text-xs font-semibold text-zinc-300">
+                ข้อมูลผูกบัญชี
+              </span>
+
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                {/* เบอร์ */}
+                <div className="space-y-2 rounded-lg border border-white/[0.06] bg-[#111216]/60 p-2.5">
+                  <label className="block text-[11px] text-zinc-400">เบอร์</label>
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    {(
+                      ['พร้อมเปลี่ยน', 'รอเปลี่ยน', 'ไม่ติด'] as PhoneBindState[]
+                    ).map((opt) => (
+                      <button
+                        key={opt}
+                        type="button"
+                        onClick={() => setPhoneState(opt)}
+                        className={`rounded-md px-2.5 py-1 text-xs font-medium transition-colors ${
+                          phoneState === opt
+                            ? 'bg-[#F1F5F9] text-[#0A0A0D]'
+                            : 'border border-white/[0.1] bg-[#0A0A0D] text-zinc-400 hover:text-zinc-200'
+                        }`}
+                      >
+                        {opt}
+                      </button>
+                    ))}
+
+                    {phoneState === 'รอเปลี่ยน' && (
+                      <div className="inline-flex items-center rounded-md border border-[#93C5FD]/45 bg-[#0A0A0D] px-1.5 py-0.5 font-[family-name:var(--font-mono)] text-xs text-[#F1F5F9]">
                         <input
                           type="text"
-                          value={phoneOwner}
-                          onChange={(e) => setPhoneOwner(e.target.value)}
-                          placeholder="เบอร์ใคร / เบอร์เช่า / 08x..."
-                          className="w-full rounded-md border border-white/[0.09] bg-[#0A0A0D] py-1.5 pl-7 pr-2.5 text-xs text-[#F1F5F9] placeholder:text-zinc-600 focus:border-[#93C5FD]/50 focus:outline-none"
-                        />
-                      </div>
-                    )}
-                  </div>
-
-                  {/* เมล */}
-                  <div className="space-y-2 rounded-lg border border-white/[0.06] bg-[#111216]/60 p-2.5">
-                    <label className="block text-[11px] text-zinc-400">เมล</label>
-                    <div className="flex flex-wrap items-center gap-1.5">
-                      {(
-                        [
-                          'พร้อมยก',
-                          'รอยก',
-                          'พร้อมเปลี่ยน',
-                          'รอเปลี่ยน',
-                          'ไม่ติด',
-                          'ไม่ยืนยัน',
-                        ] as MailBindState[]
-                      ).map((opt) => (
-                        <button
-                          key={opt}
-                          type="button"
-                          onClick={() => setMailState(opt)}
-                          className={`rounded-md px-2.5 py-1 text-xs font-medium transition-colors ${
-                            mailState === opt
-                              ? 'bg-[#F1F5F9] text-[#0A0A0D]'
-                              : 'border border-white/[0.1] bg-[#0A0A0D] text-zinc-400 hover:text-zinc-200'
-                          }`}
-                        >
-                          {opt}
-                        </button>
-                      ))}
-
-                      {(mailState === 'รอเปลี่ยน' || mailState === 'รอยก') && (
-                        <div className="inline-flex items-center rounded-md border border-[#93C5FD]/45 bg-[#0A0A0D] px-1.5 py-0.5 font-[family-name:var(--font-mono)] text-xs text-[#F1F5F9]">
-                          <input
-                            type="text"
-                            inputMode="numeric"
-                            maxLength={2}
-                            placeholder="วว"
-                            value={mailDay}
-                            onChange={(e) => {
-                              const val = e.target.value.replace(/\D/g, '').slice(0, 2);
-                              setMailDay(val);
-                              if (val.length === 2) {
-                                mailMonthInputRef.current?.focus();
-                              }
-                            }}
-                            className="w-6 bg-transparent text-center placeholder:text-zinc-600 focus:outline-none"
-                          />
-                          <span className="text-zinc-500">/</span>
-                          <input
-                            ref={mailMonthInputRef}
-                            type="text"
-                            inputMode="numeric"
-                            maxLength={2}
-                            placeholder="ดด"
-                            value={mailMonth}
-                            onChange={(e) => {
-                              const val = e.target.value.replace(/\D/g, '').slice(0, 2);
-                              setMailMonth(val);
-                            }}
-                            onKeyDown={(e) => {
-                              if (e.key === 'Backspace' && mailMonth === '') {
-                                const prev = e.currentTarget.previousElementSibling
-                                  ?.previousElementSibling as HTMLInputElement | null;
-                                prev?.focus();
-                              }
-                            }}
-                            className="w-6 bg-transparent text-center placeholder:text-zinc-600 focus:outline-none"
-                          />
-                        </div>
-                      )}
-                    </div>
-                  </div>
-
-                  {/* เฟส */}
-                  <div>
-                    <label className="mb-1.5 block text-[11px] text-zinc-400">เฟส</label>
-                    <div className="flex gap-1.5">
-                      {(['ไม่ติด', 'ติด'] as BoolBindState[]).map((opt) => (
-                        <button
-                          key={`fb-${opt}`}
-                          type="button"
-                          onClick={() => setFbState(opt)}
-                          className={`rounded-md px-3 py-1 text-xs font-medium transition-colors ${
-                            fbState === opt
-                              ? 'bg-[#F1F5F9] text-[#0A0A0D]'
-                              : 'border border-white/[0.1] bg-[#111216] text-zinc-400 hover:text-zinc-200'
-                          }`}
-                        >
-                          {opt}
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-
-                  {/* บัตร */}
-                  <div>
-                    <label className="mb-1.5 block text-[11px] text-zinc-400">บัตร</label>
-                    <div className="flex gap-1.5">
-                      {(['ไม่ติด', 'ติด'] as BoolBindState[]).map((opt) => (
-                        <button
-                          key={`card-${opt}`}
-                          type="button"
-                          onClick={() => setCardState(opt)}
-                          className={`rounded-md px-3 py-1 text-xs font-medium transition-colors ${
-                            cardState === opt
-                              ? 'bg-[#F1F5F9] text-[#0A0A0D]'
-                              : 'border border-white/[0.1] bg-[#111216] text-zinc-400 hover:text-zinc-200'
-                          }`}
-                        >
-                          {opt}
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-                </div>
-
-                <div className="grid grid-cols-1 gap-3 pt-1 sm:grid-cols-2">
-                  <div>
-                    <label className="mb-1 block text-[11px] text-zinc-400">
-                      แท็กเพิ่มเติม (ถ้ามี)
-                    </label>
-                    <input
-                      type="text"
-                      value={extraTagsText}
-                      onChange={(e) => setExtraTagsText(e.target.value)}
-                      placeholder="เช่น สกินแรร์เยอะ"
-                      className="w-full rounded-md border border-white/[0.1] bg-[#111216] px-3 py-1.5 text-xs text-[#F1F5F9] placeholder:text-zinc-600"
-                    />
-                  </div>
-                  <div>
-                    <label className="mb-1 block text-[11px] text-zinc-400">
-                      รายละเอียดเพิ่มเติมหน้าเว็บ
-                    </label>
-                    <input
-                      type="text"
-                      value={description}
-                      onChange={(e) => setDescription(e.target.value)}
-                      placeholder="คูปองเหลือ / รูน / สกินพิเศษ"
-                      className="w-full rounded-md border border-white/[0.1] bg-[#111216] px-3 py-1.5 text-xs text-[#F1F5F9] placeholder:text-zinc-600"
-                    />
-                  </div>
-                </div>
-              </div>
-
-              {/* แถวที่ 3: รูปภาพ */}
-              <div className="grid grid-cols-1 gap-4 rounded-xl border border-white/[0.07] bg-[#0A0A0D] p-3.5 sm:grid-cols-2">
-                <div>
-                  <span className="mb-2 block text-xs font-medium text-zinc-300">
-                    รูปป้ายหลัก {status === 'Unavailable' && '(ยังไม่บังคับ)'}
-                  </span>
-                  {mainImageUrl && (
-                    <img
-                      src={mainImageUrl}
-                      alt="ป้ายหลัก"
-                      className="mb-2 h-36 w-auto rounded-md border border-white/[0.1] object-contain"
-                    />
-                  )}
-                  <label className="inline-flex cursor-pointer items-center gap-2 rounded-lg border border-white/[0.1] bg-[#111216] px-3 py-2 text-xs font-medium text-zinc-200 hover:border-white/25">
-                    {uploadingMain ? (
-                      <>
-                        <Loader2 className="h-3.5 w-3.5 animate-spin text-[#93C5FD]" />
-                        <span className="text-[#93C5FD]">กำลังอัปโหลด (0/1 รูป)...</span>
-                      </>
-                    ) : (
-                      <>
-                        <Upload className="h-3.5 w-3.5 text-[#93C5FD]" />
-                        <span>{mainImageUrl ? 'เปลี่ยนรูปป้ายหลัก' : 'เลือกรูปป้ายหลัก'}</span>
-                      </>
-                    )}
-                    <input
-                      type="file"
-                      accept="image/*"
-                      disabled={isUploadingAny}
-                      onChange={handleMainImageUpload}
-                      className="hidden"
-                    />
-                  </label>
-                </div>
-
-                <div>
-                  <div className="mb-2 flex items-center justify-between gap-2">
-                    <span className="text-xs font-medium text-zinc-300">
-                      รูปเพิ่มเติม ({galleryUrls.length})
-                    </span>
-                    {galleryUrls.length > 0 && !galleryProgress && (
-                      <button
-                        type="button"
-                        onClick={() => setGalleryUrls([])}
-                        className="text-[11px] text-zinc-500 hover:text-red-400"
-                      >
-                        ล้างทั้งหมด
-                      </button>
-                    )}
-                  </div>
-
-                  {galleryUrls.length > 0 && (
-                    <div className="mb-2 flex flex-wrap gap-2">
-                      {galleryUrls.map((url, idx) => (
-                        <div key={`gal-${idx}`} className="relative h-14 w-14">
-                          <img
-                            src={url}
-                            alt="รูปเสริม"
-                            className="h-full w-full rounded-md border border-white/[0.1] object-cover"
-                          />
-                          <button
-                            type="button"
-                            onClick={() =>
-                              setGalleryUrls((prev) => prev.filter((_, i) => i !== idx))
+                          inputMode="numeric"
+                          maxLength={2}
+                          placeholder="วว"
+                          value={phoneDay}
+                          onChange={(e) => {
+                            const val = e.target.value.replace(/\D/g, '').slice(0, 2);
+                            setPhoneDay(val);
+                            if (val.length === 2) {
+                              phoneMonthInputRef.current?.focus();
                             }
-                            className="absolute -right-1.5 -top-1.5 rounded-full bg-red-600 p-0.5 text-white"
-                          >
-                            <Trash2 className="h-3 w-3" />
-                          </button>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-
-                  <label className="inline-flex cursor-pointer items-center gap-2 rounded-lg border border-white/[0.1] bg-[#111216] px-3 py-2 text-xs font-medium text-zinc-200 hover:border-white/25">
-                    {galleryProgress ? (
-                      <>
-                        <Loader2 className="h-3.5 w-3.5 animate-spin text-[#93C5FD]" />
-                        <span className="tabular-nums text-[#93C5FD]">
-                          เสร็จแล้ว {galleryProgress.done}/{galleryProgress.total} รูป
-                        </span>
-                      </>
-                    ) : (
-                      <>
-                        <Upload className="h-3.5 w-3.5 text-[#93C5FD]" />
-                        <span>เพิ่มรูปเสริม</span>
-                      </>
-                    )}
-                    <input
-                      type="file"
-                      accept="image/*"
-                      multiple
-                      disabled={isUploadingAny}
-                      onChange={handleGalleryUpload}
-                      className="hidden"
-                    />
-                  </label>
-
-                  {galleryProgress && (
-                    <div className="mt-2 space-y-1">
-                      <div className="h-1.5 w-full overflow-hidden rounded-full bg-white/[0.08]">
-                        <div
-                          className="h-full rounded-full bg-[#93C5FD] transition-all duration-200"
-                          style={{ width: `${galleryPercent}%` }}
+                          }}
+                          className="w-6 bg-transparent text-center placeholder:text-zinc-600 focus:outline-none"
+                        />
+                        <span className="text-zinc-500">/</span>
+                        <input
+                          ref={phoneMonthInputRef}
+                          type="text"
+                          inputMode="numeric"
+                          maxLength={2}
+                          placeholder="ดด"
+                          value={phoneMonth}
+                          onChange={(e) => {
+                            const val = e.target.value.replace(/\D/g, '').slice(0, 2);
+                            setPhoneMonth(val);
+                          }}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Backspace' && phoneMonth === '') {
+                              const prev = e.currentTarget.previousElementSibling
+                                ?.previousElementSibling as HTMLInputElement | null;
+                              prev?.focus();
+                            }
+                          }}
+                          className="w-6 bg-transparent text-center placeholder:text-zinc-600 focus:outline-none"
                         />
                       </div>
-                      <p className="text-[11px] tabular-nums text-zinc-400">
-                        กำลังอัปโหลดรูปที่{' '}
-                        {Math.min(galleryProgress.done + 1, galleryProgress.total)} จาก{' '}
-                        {galleryProgress.total} ({galleryPercent}%)
-                      </p>
-                    </div>
-                  )}
+                    )}
+                  </div>
+                </div>
+
+                {/* เมล */}
+                <div className="space-y-2 rounded-lg border border-white/[0.06] bg-[#111216]/60 p-2.5">
+                  <label className="block text-[11px] text-zinc-400">เมล</label>
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    {(
+                      [
+                        'พร้อมยก',
+                        'รอยก',
+                        'พร้อมเปลี่ยน',
+                        'รอเปลี่ยน',
+                        'ไม่ติด',
+                        'ไม่ยืนยัน',
+                      ] as MailBindState[]
+                    ).map((opt) => (
+                      <button
+                        key={opt}
+                        type="button"
+                        onClick={() => setMailState(opt)}
+                        className={`rounded-md px-2.5 py-1 text-xs font-medium transition-colors ${
+                          mailState === opt
+                            ? 'bg-[#F1F5F9] text-[#0A0A0D]'
+                            : 'border border-white/[0.1] bg-[#0A0A0D] text-zinc-400 hover:text-zinc-200'
+                        }`}
+                      >
+                        {opt}
+                      </button>
+                    ))}
+
+                    {(mailState === 'รอเปลี่ยน' || mailState === 'รอยก') && (
+                      <div className="inline-flex items-center rounded-md border border-[#93C5FD]/45 bg-[#0A0A0D] px-1.5 py-0.5 font-[family-name:var(--font-mono)] text-xs text-[#F1F5F9]">
+                        <input
+                          type="text"
+                          inputMode="numeric"
+                          maxLength={2}
+                          placeholder="วว"
+                          value={mailDay}
+                          onChange={(e) => {
+                            const val = e.target.value.replace(/\D/g, '').slice(0, 2);
+                            setMailDay(val);
+                            if (val.length === 2) {
+                              mailMonthInputRef.current?.focus();
+                            }
+                          }}
+                          className="w-6 bg-transparent text-center placeholder:text-zinc-600 focus:outline-none"
+                        />
+                        <span className="text-zinc-500">/</span>
+                        <input
+                          ref={mailMonthInputRef}
+                          type="text"
+                          inputMode="numeric"
+                          maxLength={2}
+                          placeholder="ดด"
+                          value={mailMonth}
+                          onChange={(e) => {
+                            const val = e.target.value.replace(/\D/g, '').slice(0, 2);
+                            setMailMonth(val);
+                          }}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Backspace' && mailMonth === '') {
+                              const prev = e.currentTarget.previousElementSibling
+                                ?.previousElementSibling as HTMLInputElement | null;
+                              prev?.focus();
+                            }
+                          }}
+                          className="w-6 bg-transparent text-center placeholder:text-zinc-600 focus:outline-none"
+                        />
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                {/* เฟส */}
+                <div>
+                  <label className="mb-1.5 block text-[11px] text-zinc-400">เฟส</label>
+                  <div className="flex gap-1.5">
+                    {(['ไม่ติด', 'ติด'] as BoolBindState[]).map((opt) => (
+                      <button
+                        key={`fb-${opt}`}
+                        type="button"
+                        onClick={() => setFbState(opt)}
+                        className={`rounded-md px-3 py-1 text-xs font-medium transition-colors ${
+                          fbState === opt
+                            ? 'bg-[#F1F5F9] text-[#0A0A0D]'
+                            : 'border border-white/[0.1] bg-[#111216] text-zinc-400 hover:text-zinc-200'
+                        }`}
+                      >
+                        {opt}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* บัตร */}
+                <div>
+                  <label className="mb-1.5 block text-[11px] text-zinc-400">บัตร</label>
+                  <div className="flex gap-1.5">
+                    {(['ไม่ติด', 'ติด'] as BoolBindState[]).map((opt) => (
+                      <button
+                        key={`card-${opt}`}
+                        type="button"
+                        onClick={() => setCardState(opt)}
+                        className={`rounded-md px-3 py-1 text-xs font-medium transition-colors ${
+                          cardState === opt
+                            ? 'bg-[#F1F5F9] text-[#0A0A0D]'
+                            : 'border border-white/[0.1] bg-[#111216] text-zinc-400 hover:text-zinc-200'
+                        }`}
+                      >
+                        {opt}
+                      </button>
+                    ))}
+                  </div>
                 </div>
               </div>
 
-              {error && (
-                <p className="rounded-lg border border-red-500/20 bg-red-500/10 px-3.5 py-2 text-xs text-red-400">
-                  {error}
-                </p>
-              )}
-
-              <div className="flex items-center justify-end gap-2.5 pt-2">
-                <button
-                  type="button"
-                  onClick={onClose}
-                  className="rounded-lg border border-white/[0.1] px-4 py-2 text-xs font-medium text-zinc-300 hover:text-white"
-                >
-                  ยกเลิก
-                </button>
-                <button
-                  type="submit"
-                  disabled={saving || isUploadingAny}
-                  className="rounded-lg bg-[#F1F5F9] px-5 py-2 text-xs font-semibold text-[#0A0A0D] hover:bg-white disabled:opacity-50"
-                >
-                  {saving ? 'กำลังบันทึก...' : 'บันทึกข้อมูลไอดี'}
-                </button>
+              <div className="grid grid-cols-1 gap-3 pt-1 sm:grid-cols-2">
+                <div>
+                  <label className="mb-1 block text-[11px] text-zinc-400">
+                    แท็กเพิ่มเติม (ถ้ามี)
+                  </label>
+                  <input
+                    type="text"
+                    value={extraTagsText}
+                    onChange={(e) => setExtraTagsText(e.target.value)}
+                    placeholder="เช่น สกินแรร์เยอะ"
+                    className="w-full rounded-md border border-white/[0.1] bg-[#111216] px-3 py-1.5 text-xs text-[#F1F5F9] placeholder:text-zinc-600"
+                  />
+                </div>
+                <div>
+                  <label className="mb-1 block text-[11px] text-zinc-400">
+                    รายละเอียดเพิ่มเติมหน้าเว็บ
+                  </label>
+                  <input
+                    type="text"
+                    value={description}
+                    onChange={(e) => setDescription(e.target.value)}
+                    placeholder="คูปองเหลือ / รูน / สกินพิเศษ"
+                    className="w-full rounded-md border border-white/[0.1] bg-[#111216] px-3 py-1.5 text-xs text-[#F1F5F9] placeholder:text-zinc-600"
+                  />
+                </div>
               </div>
-            </form>
-          )}
+            </div>
+
+            {/* แถวที่ 3: รูปภาพ */}
+            <div className="grid grid-cols-1 gap-4 rounded-xl border border-white/[0.07] bg-[#0A0A0D] p-3.5 sm:grid-cols-2">
+              <div>
+                <span className="mb-2 block text-xs font-medium text-zinc-300">
+                  รูปป้ายหลัก *
+                </span>
+                {mainImageUrl && (
+                  <img
+                    src={mainImageUrl}
+                    alt="ป้ายหลัก"
+                    className="mb-2 h-36 w-auto rounded-md border border-white/[0.1] object-contain"
+                  />
+                )}
+                <label className="inline-flex cursor-pointer items-center gap-2 rounded-lg border border-white/[0.1] bg-[#111216] px-3 py-2 text-xs font-medium text-zinc-200 hover:border-white/25">
+                  {uploadingMain ? (
+                    <>
+                      <Loader2 className="h-3.5 w-3.5 animate-spin text-[#93C5FD]" />
+                      <span className="text-[#93C5FD]">กำลังอัปโหลด (0/1 รูป)...</span>
+                    </>
+                  ) : (
+                    <>
+                      <Upload className="h-3.5 w-3.5 text-[#93C5FD]" />
+                      <span>{mainImageUrl ? 'เปลี่ยนรูปป้ายหลัก' : 'เลือกรูปป้ายหลัก'}</span>
+                    </>
+                  )}
+                  <input
+                    type="file"
+                    accept="image/*"
+                    disabled={isUploadingAny}
+                    onChange={handleMainImageUpload}
+                    className="hidden"
+                  />
+                </label>
+              </div>
+
+              <div>
+                <div className="mb-2 flex items-center justify-between gap-2">
+                  <span className="text-xs font-medium text-zinc-300">
+                    รูปเพิ่มเติม ({galleryUrls.length})
+                  </span>
+                  {galleryUrls.length > 0 && !galleryProgress && (
+                    <button
+                      type="button"
+                      onClick={() => setGalleryUrls([])}
+                      className="text-[11px] text-zinc-500 hover:text-red-400"
+                    >
+                      ล้างทั้งหมด
+                    </button>
+                  )}
+                </div>
+
+                {galleryUrls.length > 0 && (
+                  <div className="mb-2 flex flex-wrap gap-2">
+                    {galleryUrls.map((url, idx) => (
+                      <div key={`gal-${idx}`} className="relative h-14 w-14">
+                        <img
+                          src={url}
+                          alt="รูปเสริม"
+                          className="h-full w-full rounded-md border border-white/[0.1] object-cover"
+                        />
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setGalleryUrls((prev) => prev.filter((_, i) => i !== idx))
+                          }
+                          className="absolute -right-1.5 -top-1.5 rounded-full bg-red-600 p-0.5 text-white"
+                        >
+                          <Trash2 className="h-3 w-3" />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                <label className="inline-flex cursor-pointer items-center gap-2 rounded-lg border border-white/[0.1] bg-[#111216] px-3 py-2 text-xs font-medium text-zinc-200 hover:border-white/25">
+                  {galleryProgress ? (
+                    <>
+                      <Loader2 className="h-3.5 w-3.5 animate-spin text-[#93C5FD]" />
+                      <span className="tabular-nums text-[#93C5FD]">
+                        เสร็จแล้ว {galleryProgress.done}/{galleryProgress.total} รูป
+                      </span>
+                    </>
+                  ) : (
+                    <>
+                      <Upload className="h-3.5 w-3.5 text-[#93C5FD]" />
+                      <span>เพิ่มรูปเสริม</span>
+                    </>
+                  )}
+                  <input
+                    type="file"
+                    accept="image/*"
+                    multiple
+                    disabled={isUploadingAny}
+                    onChange={handleGalleryUpload}
+                    className="hidden"
+                  />
+                </label>
+
+                {galleryProgress && (
+                  <div className="mt-2 space-y-1">
+                    <div className="h-1.5 w-full overflow-hidden rounded-full bg-white/[0.08]">
+                      <div
+                        className="h-full rounded-full bg-[#93C5FD] transition-all duration-200"
+                        style={{ width: `${galleryPercent}%` }}
+                      />
+                    </div>
+                    <p className="text-[11px] tabular-nums text-zinc-400">
+                      กำลังอัปโหลดรูปที่{' '}
+                      {Math.min(galleryProgress.done + 1, galleryProgress.total)} จาก{' '}
+                      {galleryProgress.total} ({galleryPercent}%)
+                    </p>
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {error && (
+              <p className="rounded-lg border border-red-500/20 bg-red-500/10 px-3.5 py-2 text-xs text-red-400">
+                {error}
+              </p>
+            )}
+
+            <div className="flex items-center justify-end gap-2.5 pt-2">
+              <button
+                type="button"
+                onClick={onClose}
+                className="rounded-lg border border-white/[0.1] px-4 py-2 text-xs font-medium text-zinc-300 hover:text-white"
+              >
+                ยกเลิก
+              </button>
+              <button
+                type="submit"
+                disabled={saving || isUploadingAny}
+                className="rounded-lg bg-[#F1F5F9] px-5 py-2 text-xs font-semibold text-[#0A0A0D] hover:bg-white disabled:opacity-50"
+              >
+                {saving ? 'กำลังบันทึก...' : 'บันทึกข้อมูลไอดี'}
+              </button>
+            </div>
+          </form>
         </div>
       </div>
     </ModalPortal>

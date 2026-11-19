@@ -1,12 +1,6 @@
 import { NextResponse } from 'next/server';
-import { cookies } from 'next/headers';
-import type { SupabaseClient, User } from '@supabase/supabase-js';
+import type { User } from '@supabase/supabase-js';
 import { createSupabaseServerClient } from '@/lib/supabase/server';
-import {
-  PIN_COOKIE_NAME,
-  pinVersionFromSalt,
-  verifyPinToken,
-} from '@/lib/pin-token';
 import type { AdminRole } from '@/types/database';
 
 export const NO_STORE_HEADERS: Record<string, string> = {
@@ -35,27 +29,8 @@ export type AdminGuardResult =
   | { ok: true; ctx: AdminContext }
   | { ok: false; response: NextResponse };
 
-export async function isPinUnlocked(
-  supabase: SupabaseClient | ServerSupabase,
-  userId: string
-): Promise<boolean> {
-  const { data: pinRow } = await supabase
-    .from('admin_security')
-    .select('pin_salt')
-    .eq('user_id', userId)
-    .maybeSingle();
-
-  if (!pinRow?.pin_salt) return false;
-
-  const cookieStore = await cookies();
-  const token = cookieStore.get(PIN_COOKIE_NAME)?.value;
-
-  return verifyPinToken(token, userId, pinVersionFromSalt(String(pinRow.pin_salt)));
-}
-
 export async function requireAdmin(options?: {
   ownerOnly?: boolean;
-  pin?: boolean;
 }): Promise<AdminGuardResult> {
   const supabase = await createSupabaseServerClient();
   const {
@@ -105,19 +80,6 @@ export async function requireAdmin(options?: {
         { status: 403 }
       ),
     };
-  }
-
-  if (options?.pin) {
-    const unlocked = await isPinUnlocked(supabase, user.id);
-    if (!unlocked) {
-      return {
-        ok: false,
-        response: jsonNoStore(
-          { error: 'กรุณาปลดล็อก PIN 6 หลักก่อนทำรายการ' },
-          { status: 403 }
-        ),
-      };
-    }
   }
 
   return { ok: true, ctx: { supabase, user, role } };

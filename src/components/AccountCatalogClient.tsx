@@ -21,6 +21,12 @@ interface AccountCatalogClientProps {
 
 type PublicStatusFilter = 'ALL' | 'Available' | 'Installment' | 'SoldOut';
 
+const HIDDEN_PLAN_TAGS = new Set(['ผ่อนรายสัปดาห์', 'ผ่อนรายเดือน']);
+
+function getDisplayTags(tags: string[] | undefined): string[] {
+  return (tags ?? []).filter((t) => !HIDDEN_PLAN_TAGS.has(t.trim()));
+}
+
 function resolveAccountPlanMode(
   tags: string[] | undefined,
   price: number
@@ -45,7 +51,9 @@ export default function AccountCatalogClient({
     [accounts, initialAccounts]
   );
 
-  const [statusFilter, setStatusFilter] = useState<PublicStatusFilter>('ALL');
+  // ค่าเริ่มต้นของ /store คือ "พร้อมขาย" (Available)
+  const [statusFilter, setStatusFilter] =
+    useState<PublicStatusFilter>('Available');
   const [searchQuery, setSearchQuery] = useState('');
   const [maxPrice, setMaxPrice] = useState<string>('');
   const [showFilters, setShowFilters] = useState(false);
@@ -55,7 +63,6 @@ export default function AccountCatalogClient({
     const priceCap = Number(maxPrice);
 
     return sourceAccounts
-      .filter((acc) => acc.status !== 'Unavailable')
       .filter((acc) => {
         if (statusFilter !== 'ALL' && acc.status !== statusFilter) {
           return false;
@@ -65,7 +72,7 @@ export default function AccountCatalogClient({
         }
         if (!q) return true;
         const inCode = acc.code.toLowerCase().includes(q);
-        const inTags = (acc.tags ?? []).some((t) =>
+        const inTags = getDisplayTags(acc.tags).some((t) =>
           t.toLowerCase().includes(q)
         );
         const inDesc = (acc.description ?? '').toLowerCase().includes(q);
@@ -80,14 +87,12 @@ export default function AccountCatalogClient({
   }, [sourceAccounts, statusFilter, searchQuery, maxPrice]);
 
   const counts = useMemo(() => {
-    const publicList = sourceAccounts.filter(
-      (acc) => acc.status !== 'Unavailable'
-    );
     return {
-      ALL: publicList.length,
-      Available: publicList.filter((a) => a.status === 'Available').length,
-      Installment: publicList.filter((a) => a.status === 'Installment').length,
-      SoldOut: publicList.filter((a) => a.status === 'SoldOut').length,
+      ALL: sourceAccounts.length,
+      Available: sourceAccounts.filter((a) => a.status === 'Available').length,
+      Installment: sourceAccounts.filter((a) => a.status === 'Installment')
+        .length,
+      SoldOut: sourceAccounts.filter((a) => a.status === 'SoldOut').length,
     };
   }, [sourceAccounts]);
 
@@ -102,7 +107,7 @@ export default function AccountCatalogClient({
               type="text"
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              placeholder="ค้นหารหัสไอดี เช่น PM0204 หรือสกินที่สนใจ..."
+              placeholder="ค้นหารหัส เช่น PM0001"
               className="w-full rounded-2xl border border-white/[0.09] bg-[#12141C]/90 py-2.5 pl-10 pr-9 text-xs text-[#F1F5F9] placeholder:text-zinc-500 focus:border-[#93C5FD]/50 focus:outline-none sm:py-3 sm:text-sm"
             />
             {searchQuery && (
@@ -169,8 +174,8 @@ export default function AccountCatalogClient({
         <div className="flex items-center gap-1.5 overflow-x-auto pb-1 no-scrollbar">
           {(
             [
-              { key: 'ALL', label: 'ทั้งหมด' },
               { key: 'Available', label: 'พร้อมขาย' },
+              { key: 'ALL', label: 'ทั้งหมด' },
               { key: 'Installment', label: 'ติดผ่อน' },
               { key: 'SoldOut', label: 'ขายแล้ว' },
             ] as const
@@ -191,7 +196,7 @@ export default function AccountCatalogClient({
         </div>
       </div>
 
-      {/* รายการไอดีเกม (มือถือ 2 คอลัมน์ / จอใหญ่ 3-4 คอลัมน์) */}
+      {/* รายการไอดีเกม */}
       {visibleAccounts.length === 0 ? (
         <div className="frost-card flex flex-col items-center justify-center rounded-2xl py-20 text-center">
           <span className="mb-3 flex h-11 w-11 items-center justify-center rounded-2xl border border-[#93C5FD]/25 bg-[#93C5FD]/10 text-[#93C5FD]">
@@ -213,6 +218,7 @@ export default function AccountCatalogClient({
               ? acc.min_down_monthly
               : acc.min_down_weekly;
             const canOptimize = isOptimizableImageUrl(acc.main_image_url);
+            const displayTags = getDisplayTags(acc.tags);
 
             return (
               <Link
@@ -221,7 +227,6 @@ export default function AccountCatalogClient({
                 className="frost-card-interactive group flex flex-col justify-between overflow-hidden rounded-2xl"
               >
                 <div>
-                  {/* รูปป้ายแนวตั้งเหมือนหน้าตัดรูป ชิดบน */}
                   <div className="relative aspect-[4/5] w-full overflow-hidden bg-[#0D0F14]">
                     {acc.main_image_url ? (
                       canOptimize ? (
@@ -252,7 +257,6 @@ export default function AccountCatalogClient({
                     </span>
                   </div>
 
-                  {/* ราคา & แท็ก */}
                   <div className="space-y-2 p-2.5 sm:space-y-2.5 sm:p-3.5">
                     <div className="flex items-baseline justify-between gap-1">
                       <div>
@@ -276,9 +280,9 @@ export default function AccountCatalogClient({
                       )}
                     </div>
 
-                    {(acc.tags ?? []).length > 0 && (
+                    {displayTags.length > 0 && (
                       <div className="flex flex-wrap gap-1">
-                        {acc.tags.slice(0, 3).map((tag, idx) => (
+                        {displayTags.slice(0, 3).map((tag, idx) => (
                           <span
                             key={`${acc.id}-tag-${idx}`}
                             className="rounded-md border border-white/[0.08] bg-[#0D0F14]/90 px-1.5 py-0.5 text-[10px] text-zinc-300 sm:px-2 sm:text-[11px]"
@@ -286,9 +290,9 @@ export default function AccountCatalogClient({
                             {tag}
                           </span>
                         ))}
-                        {acc.tags.length > 3 && (
+                        {displayTags.length > 3 && (
                           <span className="rounded-md border border-white/[0.08] bg-[#0D0F14]/90 px-1.5 py-0.5 text-[10px] text-zinc-400 sm:px-2 sm:text-[11px]">
-                            +{acc.tags.length - 3}
+                            +{displayTags.length - 3}
                           </span>
                         )}
                       </div>
@@ -296,7 +300,6 @@ export default function AccountCatalogClient({
                   </div>
                 </div>
 
-                {/* ปุ่ม "เพิ่มเติม" */}
                 <div className="px-2.5 pb-2.5 sm:px-3.5 sm:pb-3.5">
                   <div className="flex w-full items-center justify-center gap-1 rounded-xl border border-white/[0.1] bg-[#0D0F14] py-2 text-xs font-semibold text-[#F1F5F9] transition-colors group-hover:border-[#93C5FD]/45 group-hover:bg-[#93C5FD]/15 group-hover:text-[#93C5FD]">
                     <span>เพิ่มเติม</span>

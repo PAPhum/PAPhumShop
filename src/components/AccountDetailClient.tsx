@@ -26,6 +26,8 @@ interface AccountDetailClientProps {
   settings?: InstallmentSettings;
 }
 
+const HIDDEN_PLAN_TAGS = new Set(['ผ่อนรายสัปดาห์', 'ผ่อนรายเดือน']);
+
 function resolveAccountPlanMode(
   tags: string[] | undefined,
   price: number
@@ -48,6 +50,11 @@ export default function AccountDetailClient({
     }
     return list;
   }, [account]);
+
+  const displayTags = useMemo(
+    () => (account.tags ?? []).filter((t) => !HIDDEN_PLAN_TAGS.has(t.trim())),
+    [account.tags]
+  );
 
   const rates = useMemo(() => resolveInstallmentRates(settings), [settings]);
 
@@ -150,7 +157,6 @@ export default function AccountDetailClient({
         </div>
 
         <div className="grid grid-cols-1 gap-6 lg:grid-cols-12">
-          {/* ฝั่งซ้าย: รูปป้ายหลัก + รูปเพิ่มเติม */}
           <div className="space-y-4 lg:col-span-7">
             {allImages.length > 0 && (
               <div className="space-y-2.5">
@@ -218,7 +224,6 @@ export default function AccountDetailClient({
               </div>
             )}
 
-            {/* รายละเอียดไอดี */}
             <div className="frost-card space-y-4 rounded-2xl p-5">
               <div className="flex flex-wrap items-baseline justify-between gap-2 border-b border-white/[0.07] pb-4">
                 <div>
@@ -236,9 +241,9 @@ export default function AccountDetailClient({
                 </div>
               </div>
 
-              {(account.tags ?? []).length > 0 && (
+              {displayTags.length > 0 && (
                 <div className="flex flex-wrap gap-1.5">
-                  {account.tags.map((tag, idx) => (
+                  {displayTags.map((tag, idx) => (
                     <span
                       key={`${account.id}-detail-tag-${idx}`}
                       className="rounded-lg border border-white/[0.09] bg-[#0D0F14] px-3 py-1 text-xs font-medium text-zinc-200"
@@ -262,7 +267,6 @@ export default function AccountDetailClient({
             </div>
           </div>
 
-          {/* ฝั่งขวา: คำนวณยอดผ่อน */}
           <div className="lg:col-span-5">
             {account.status === 'SoldOut' ? (
               <div className="frost-card sticky top-20 space-y-3 rounded-2xl p-5">

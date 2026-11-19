@@ -1,52 +1,10 @@
 import { NextRequest } from 'next/server';
 import { revalidateTag } from 'next/cache';
-import { encryptSecret } from '@/lib/crypto';
-import {
-  syncAccountToSheets,
-  syncAllAccountsToSheets,
-  SheetAccountPayload,
-} from '@/lib/sheets-sync';
 import { AccountStatus } from '@/types/database';
 import { jsonNoStore, requireAdmin } from '@/lib/auth/guard';
 import { dbErrorResponse, serverErrorResponse } from '@/lib/api-error';
 
-const VALID_STATUSES: AccountStatus[] = [
-  'Unavailable',
-  'Available',
-  'Installment',
-  'SoldOut',
-];
-
-function packPrivateNotes(params: {
-  purchaseDate?: string;
-  phoneOwner?: string;
-  notes?: string;
-}): string {
-  const parts: string[] = [];
-  if (params.purchaseDate?.trim()) {
-    parts.push(`[ซื้อ:${params.purchaseDate.trim()}]`);
-  }
-  if (params.phoneOwner?.trim()) {
-    parts.push(`[เบอร์:${params.phoneOwner.trim()}]`);
-  }
-  if (params.notes?.trim()) {
-    parts.push(params.notes.trim());
-  }
-  return parts.join(' ');
-}
-
-function buildSheetPayload(row: Record<string, unknown>): SheetAccountPayload {
-  return {
-    code: String(row.code ?? ''),
-    status: String(row.status ?? 'Unavailable'),
-    price: Number(row.price ?? 0),
-    cost: Number(row.cost ?? 0),
-    min_down_weekly: Number(row.min_down_weekly ?? 0),
-    min_down_monthly: Number(row.min_down_monthly ?? 0),
-    tags: Array.isArray(row.tags) ? (row.tags as string[]) : [],
-    updated_at: String(row.updated_at ?? new Date().toISOString()),
-  };
-}
+const VALID_STATUSES: AccountStatus[] = ['Available', 'Installment', 'SoldOut'];
 
 export async function GET() {
   try {
@@ -72,128 +30,75 @@ export async function GET() {
 
 export async function POST(req: NextRequest) {
   try {
-    const auth = await requireAdmin({ ownerOnly: true, pin: true });
+    const auth = await requireAdmin({ ownerOnly: true });
     if (!auth.ok) return auth.response;
 
     const { supabase } = auth.ctx;
 
-    const body = await req.json();
-
-    // กรณีกดปุ่ม Sync Sheet ทั้งหมด
-    if (body.action === 'sync_all') {
-      const { data: rows, error } = await supabase
-        .from('accounts')
-        .select('*')
-        .order('code', { ascending: true });
-
-      if (error) {
-        return dbErrorResponse('accounts.sync_all', error, 500);
-      }
-
-      const payloads = (rows ?? []).map((row) => buildSheetPayload(row));
-      const syncResult = await syncAllAccountsToSheets(payloads);
-
-      if (!syncResult.ok) {
-        return jsonNoStore(
-          { ok: false, error: syncResult.error ?? 'Sync Sheet ไม่สำเร็จ' },
-          { status: 502 }
-        );
-      }
-
-      return jsonNoStore({ ok: true, count: payloads.length });
+    const body = await req.json().catch(() => null);
+    if (!body || typeof body !== 'object') {
+      return jsonNoStore({ error: 'ข้อมูลไม่ถูกต้อง' }, { status: 400 });
     }
 
-    // กรณีสร้างไอดีใหม่
     const code = String(body.code ?? '').trim();
     if (!code) {
-      return jsonNoStore({ error: 'กรุณาระบุรหัสไอดี' }, { status: 400 });
+      return jsonNoStore({ error: 'กรุณาระบุรหัสไอดี เช่น PM0001' }, { status: 400 });
+    }
+
+    const mainImageUrl = body.main_image_url ? String(body.main_image_url).trim() : '';
+    if (!mainImageUrl) {
+      return jsonNoStore({ error: 'กรุณาอัปโหลดรูปป้ายหลักก่อนบันทึก' }, { status: 400 });
     }
 
     const status: AccountStatus = VALID_STATUSES.includes(body.status)
       ? body.status
-      : 'Unavailable';
+      : 'Available';
 
-    const priceNum = Number(body.price) || 0;
-
-    const combinedNotes = packPrivateNotes({
-      purchaseDate: body.purchase_date,
-      phoneOwner: body.phone_owner,
-      notes: body.private_notes,
-    });
-
+    const priceNum = Math.max(0, Number(body.price) || 0);
     const now = new Date().toISOString();
 
     const insertData = {
       code,
       status,
       price: priceNum,
-      cost: Number(body.cost) || 0,
+      cost: 0,
       min_down_weekly: Math.max(0, Math.trunc(Number(body.min_down_weekly) || 0)),
-      min_down_monthly: Math.max(
-        0,
-        Math.trunc(Number(body.min_down_monthly) || 0)
-      ),
-      interest_free_weeks: Math.max(
-        0,
-        Math.trunc(Number(body.interest_free_weeks) || 0)
-      ),
-      interest_free_months: Math.max(
-        0,
-        Math.trunc(Number(body.interest_free_months) || 0)
-      ),
+      min_down_monthly: Math.max(0, Math.trunc(Number(body.min_down_monthly) || 0)),
+      interest_free_weeks: Math.max(0, Math.trunc(Number(body.interest_free_weeks) || 0)),
+      interest_free_months: Math.max(0, Math.trunc(Number(body.interest_free_months) || 0)),
       tags: Array.isArray(body.tags) ? body.tags : [],
       description: body.description ? String(body.description) : null,
-      main_image_url: body.main_image_url ? String(body.main_image_url) : null,
+      main_image_url: mainImageUrl,
       gallery_urls: Array.isArray(body.gallery_urls) ? body.gallery_urls : [],
-      game_uid_enc: body.game_uid ? encryptSecret(String(body.game_uid)) : null,
-      login_provider_enc: body.login_provider
-        ? encryptSecret(String(body.login_provider))
-        : encryptSecret('Garena'),
-      username_enc: body.username ? encryptSecret(String(body.username)) : null,
-      password_enc: body.password ? encryptSecret(String(body.password)) : null,
-      authenticator_enc: body.authenticator
-        ? encryptSecret(String(body.authenticator))
-        : null,
-      gmail_enc: body.gmail ? encryptSecret(String(body.gmail)) : null,
-      gmail_password_enc: body.gmail_password
-        ? encryptSecret(String(body.gmail_password))
-        : null,
-      gmail_authenticator_enc: body.gmail_authenticator
-        ? encryptSecret(String(body.gmail_authenticator))
-        : null,
-      gmail_recovery_enc: body.gmail_recovery
-        ? encryptSecret(String(body.gmail_recovery))
-        : null,
-      private_notes_enc: combinedNotes ? encryptSecret(combinedNotes) : null,
+      game_uid_enc: null,
+      login_provider_enc: null,
+      username_enc: null,
+      password_enc: null,
+      authenticator_enc: null,
+      gmail_enc: null,
+      gmail_password_enc: null,
+      gmail_authenticator_enc: null,
+      gmail_recovery_enc: null,
+      private_notes_enc: null,
       updated_at: now,
     };
 
     const { data: created, error: insertError } = await supabase
       .from('accounts')
       .insert(insertData)
-      .select('*')
+      .select('id, code, status, price, min_down_weekly, min_down_monthly, interest_free_weeks, interest_free_months, tags, description, main_image_url, gallery_urls, created_at, updated_at')
       .single();
 
-    if (insertError) {
-      return dbErrorResponse('accounts.insert', insertError, 400);
-    }
-
-    let sheetWarning: string | undefined;
-    try {
-      const syncRes = await syncAccountToSheets('upsert', buildSheetPayload(created));
-      if (!syncRes.ok) {
-        sheetWarning = syncRes.error;
-      }
-    } catch {
-      sheetWarning = 'Sheets sync error';
+    if (insertError || !created) {
+      return dbErrorResponse(
+        'accounts.insert',
+        insertError ?? new Error('บันทึกไอดีไม่สำเร็จ'),
+        400
+      );
     }
 
     revalidateTag('accounts', { expire: 0 });
-    return jsonNoStore({
-      ok: true,
-      id: created.id,
-      sheetWarning,
-    });
+    return jsonNoStore({ account: created });
   } catch (err) {
     return serverErrorResponse('accounts.post', err);
   }

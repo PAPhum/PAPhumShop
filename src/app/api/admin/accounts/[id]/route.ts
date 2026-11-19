@@ -1,135 +1,28 @@
 import { NextRequest } from 'next/server';
 import { revalidateTag } from 'next/cache';
-import { encryptSecret, decryptSecret } from '@/lib/crypto';
-import { syncAccountToSheets, SheetAccountPayload } from '@/lib/sheets-sync';
-import { AccountSecretDecrypted, AccountStatus } from '@/types/database';
-import { isPinUnlocked, jsonNoStore, requireAdmin } from '@/lib/auth/guard';
+import { AccountStatus } from '@/types/database';
+import { jsonNoStore, requireAdmin } from '@/lib/auth/guard';
 import { dbErrorResponse, serverErrorResponse } from '@/lib/api-error';
+import { deleteR2Object } from '@/lib/r2';
 
-const VALID_STATUSES: AccountStatus[] = [
-  'Unavailable',
-  'Available',
-  'Installment',
-  'SoldOut',
-];
+const VALID_STATUSES: AccountStatus[] = ['Available', 'Installment', 'SoldOut'];
 
-function buildSheetPayload(row: Record<string, unknown>): SheetAccountPayload {
-  return {
-    code: String(row.code ?? ''),
-    status: String(row.status ?? 'Unavailable'),
-    price: Number(row.price ?? 0),
-    cost: Number(row.cost ?? 0),
-    min_down_weekly: Number(row.min_down_weekly ?? 0),
-    min_down_monthly: Number(row.min_down_monthly ?? 0),
-    tags: Array.isArray(row.tags) ? (row.tags as string[]) : [],
-    updated_at: String(row.updated_at ?? new Date().toISOString()),
-  };
-}
+function extractR2KeyFromUrl(url: string | null | undefined): string | null {
+  if (!url) return null;
+  const trimmed = url.trim();
+  if (!trimmed) return null;
 
-function packPrivateNotes(params: {
-  purchaseDate?: string;
-  phoneOwner?: string;
-  notes?: string;
-}): string {
-  const parts: string[] = [];
-  if (params.purchaseDate?.trim()) {
-    parts.push(`[ซื้อ:${params.purchaseDate.trim()}]`);
-  }
-  if (params.phoneOwner?.trim()) {
-    parts.push(`[เบอร์:${params.phoneOwner.trim()}]`);
-  }
-  if (params.notes?.trim()) {
-    parts.push(params.notes.trim());
-  }
-  return parts.join(' ');
-}
-
-function unpackPrivateNotes(raw: string): {
-  purchase_date: string;
-  phone_owner: string;
-  private_notes: string;
-} {
-  let text = raw;
-  let purchaseDate = '';
-  let phoneOwner = '';
-
-  const purchaseMatch = text.match(/\[ซื้อ:([^\]]+)\]/);
-  if (purchaseMatch) {
-    purchaseDate = purchaseMatch[1].trim();
-    text = text.replace(purchaseMatch[0], '').trim();
+  const baseUrl = (process.env.R2_PUBLIC_URL ?? '').replace(/\/+$/, '');
+  if (baseUrl && trimmed.startsWith(`${baseUrl}/`)) {
+    return trimmed.slice(baseUrl.length + 1) || null;
   }
 
-  const phoneMatch = text.match(/\[เบอร์:([^\]]+)\]/);
-  if (phoneMatch) {
-    phoneOwner = phoneMatch[1].trim();
-    text = text.replace(phoneMatch[0], '').trim();
-  }
-
-  return {
-    purchase_date: purchaseDate,
-    phone_owner: phoneOwner,
-    private_notes: text,
-  };
-}
-
-function decryptAccountRow(row: Record<string, unknown>): AccountSecretDecrypted {
-  const rawNotes = row.private_notes_enc
-    ? decryptSecret(String(row.private_notes_enc))
-    : '';
-  const unpacked = unpackPrivateNotes(rawNotes);
-
-  return {
-    cost: Number(row.cost ?? 0),
-    purchase_date: unpacked.purchase_date,
-    phone_owner: unpacked.phone_owner,
-    game_uid: row.game_uid_enc ? decryptSecret(String(row.game_uid_enc)) : '',
-    login_provider: row.login_provider_enc
-      ? decryptSecret(String(row.login_provider_enc))
-      : 'Garena',
-    username: row.username_enc ? decryptSecret(String(row.username_enc)) : '',
-    password: row.password_enc ? decryptSecret(String(row.password_enc)) : '',
-    authenticator: row.authenticator_enc
-      ? decryptSecret(String(row.authenticator_enc))
-      : '',
-    gmail: row.gmail_enc ? decryptSecret(String(row.gmail_enc)) : '',
-    gmail_password: row.gmail_password_enc
-      ? decryptSecret(String(row.gmail_password_enc))
-      : '',
-    gmail_authenticator: row.gmail_authenticator_enc
-      ? decryptSecret(String(row.gmail_authenticator_enc))
-      : '',
-    gmail_recovery: row.gmail_recovery_enc
-      ? decryptSecret(String(row.gmail_recovery_enc))
-      : '',
-    private_notes: unpacked.private_notes,
-  };
-}
-
-export async function GET(
-  _req: NextRequest,
-  context: { params: Promise<{ id: string }> }
-) {
   try {
-    const { id } = await context.params;
-    const auth = await requireAdmin({ ownerOnly: true, pin: true });
-    if (!auth.ok) return auth.response;
-
-    const { supabase } = auth.ctx;
-
-    const { data: row, error } = await supabase
-      .from('accounts')
-      .select('*')
-      .eq('id', id)
-      .single();
-
-    if (error || !row) {
-      return jsonNoStore({ error: 'ไม่พบข้อมูลไอดี' }, { status: 404 });
-    }
-
-    const secret = decryptAccountRow(row);
-    return jsonNoStore({ secret });
-  } catch (err) {
-    return serverErrorResponse('accounts.id.get', err);
+    const parsed = new URL(trimmed);
+    const key = parsed.pathname.replace(/^\/+/, '');
+    return key || null;
+  } catch {
+    return null;
   }
 }
 
@@ -142,61 +35,31 @@ export async function PATCH(
     const auth = await requireAdmin({ ownerOnly: true });
     if (!auth.ok) return auth.response;
 
-    const { supabase, user } = auth.ctx;
+    const { supabase } = auth.ctx;
 
-    const body = await req.json();
+    const body = await req.json().catch(() => null);
+    if (!body || typeof body !== 'object') {
+      return jsonNoStore({ error: 'ข้อมูลไม่ถูกต้อง' }, { status: 400 });
+    }
+
     const now = new Date().toISOString();
 
-    // กรณีเปลี่ยนสถานะด่วนบนการ์ด (บังคับ PIN เฉพาะสถานะ Installment / SoldOut)
     if (body.quickStatusOnly === true) {
       if (!VALID_STATUSES.includes(body.status)) {
         return jsonNoStore({ error: 'สถานะไม่ถูกต้อง' }, { status: 400 });
       }
 
-      const needsPin =
-        body.status === 'Installment' || body.status === 'SoldOut';
-      if (needsPin && !(await isPinUnlocked(supabase, user.id))) {
-        return jsonNoStore(
-          { error: 'กรุณาปลดล็อก PIN 6 หลักก่อนเปลี่ยนสถานะนี้' },
-          { status: 403 }
-        );
-      }
-
-      const { data: updated, error } = await supabase
+      const { error } = await supabase
         .from('accounts')
         .update({ status: body.status, updated_at: now })
-        .eq('id', id)
-        .select('code, status')
-        .single();
+        .eq('id', id);
 
-      if (error || !updated) {
-        return dbErrorResponse(
-          'accounts.id.quick_status',
-          error ?? new Error('อัปเดตสถานะไม่สำเร็จ'),
-          400
-        );
-      }
-
-      try {
-        await syncAccountToSheets('upsert', {
-          code: String(updated.code ?? ''),
-          status: String(updated.status ?? 'Unavailable'),
-        });
-      } catch {
-        // Non-blocking sync
+      if (error) {
+        return dbErrorResponse('accounts.id.quick_status', error, 400);
       }
 
       revalidateTag('accounts', { expire: 0 });
       return jsonNoStore({ ok: true });
-    }
-
-    // กรณีแก้ไขข้อมูลเต็มรูปแบบ (ต้องปลดล็อก PIN)
-    const unlocked = await isPinUnlocked(supabase, user.id);
-    if (!unlocked) {
-      return jsonNoStore(
-        { error: 'กรุณาปลดล็อก PIN 6 หลักก่อนแก้ไขข้อมูล' },
-        { status: 403 }
-      );
     }
 
     const code = String(body.code ?? '').trim();
@@ -204,90 +67,73 @@ export async function PATCH(
       return jsonNoStore({ error: 'กรุณาระบุรหัสไอดี' }, { status: 400 });
     }
 
+    const nextMainUrl = body.main_image_url ? String(body.main_image_url).trim() : '';
+    if (!nextMainUrl) {
+      return jsonNoStore({ error: 'กรุณาอัปโหลดรูปป้ายหลักก่อนบันทึก' }, { status: 400 });
+    }
+
+    const { data: beforeRow } = await supabase
+      .from('accounts')
+      .select('main_image_url, gallery_urls')
+      .eq('id', id)
+      .maybeSingle();
+
     const status: AccountStatus = VALID_STATUSES.includes(body.status)
       ? body.status
-      : 'Unavailable';
+      : 'Available';
 
-    const priceNum = Number(body.price) || 0;
-
-    const combinedNotes = packPrivateNotes({
-      purchaseDate: body.purchase_date,
-      phoneOwner: body.phone_owner,
-      notes: body.private_notes,
-    });
+    const priceNum = Math.max(0, Number(body.price) || 0);
+    const nextGalleryUrls: string[] = Array.isArray(body.gallery_urls)
+      ? body.gallery_urls.map((u: unknown) => String(u))
+      : [];
 
     const updateData = {
       code,
       status,
       price: priceNum,
-      cost: Number(body.cost) || 0,
+      cost: 0,
       min_down_weekly: Math.max(0, Math.trunc(Number(body.min_down_weekly) || 0)),
-      min_down_monthly: Math.max(
-        0,
-        Math.trunc(Number(body.min_down_monthly) || 0)
-      ),
-      interest_free_weeks: Math.max(
-        0,
-        Math.trunc(Number(body.interest_free_weeks) || 0)
-      ),
-      interest_free_months: Math.max(
-        0,
-        Math.trunc(Number(body.interest_free_months) || 0)
-      ),
+      min_down_monthly: Math.max(0, Math.trunc(Number(body.min_down_monthly) || 0)),
+      interest_free_weeks: Math.max(0, Math.trunc(Number(body.interest_free_weeks) || 0)),
+      interest_free_months: Math.max(0, Math.trunc(Number(body.interest_free_months) || 0)),
       tags: Array.isArray(body.tags) ? body.tags : [],
       description: body.description ? String(body.description) : null,
-      main_image_url: body.main_image_url ? String(body.main_image_url) : null,
-      gallery_urls: Array.isArray(body.gallery_urls) ? body.gallery_urls : [],
-      game_uid_enc: body.game_uid ? encryptSecret(String(body.game_uid)) : null,
-      login_provider_enc: body.login_provider
-        ? encryptSecret(String(body.login_provider))
-        : encryptSecret('Garena'),
-      username_enc: body.username ? encryptSecret(String(body.username)) : null,
-      password_enc: body.password ? encryptSecret(String(body.password)) : null,
-      authenticator_enc: body.authenticator
-        ? encryptSecret(String(body.authenticator))
-        : null,
-      gmail_enc: body.gmail ? encryptSecret(String(body.gmail)) : null,
-      gmail_password_enc: body.gmail_password
-        ? encryptSecret(String(body.gmail_password))
-        : null,
-      gmail_authenticator_enc: body.gmail_authenticator
-        ? encryptSecret(String(body.gmail_authenticator))
-        : null,
-      gmail_recovery_enc: body.gmail_recovery
-        ? encryptSecret(String(body.gmail_recovery))
-        : null,
-      private_notes_enc: combinedNotes ? encryptSecret(combinedNotes) : null,
+      main_image_url: nextMainUrl,
+      gallery_urls: nextGalleryUrls,
       updated_at: now,
     };
 
-    const { data: updated, error: updateError } = await supabase
+    const { error: updateError } = await supabase
       .from('accounts')
       .update(updateData)
-      .eq('id', id)
-      .select('*')
-      .single();
+      .eq('id', id);
 
-    if (updateError || !updated) {
-      return dbErrorResponse(
-        'accounts.id.update',
-        updateError ?? new Error('บันทึกข้อมูลไม่สำเร็จ'),
-        400
-      );
+    if (updateError) {
+      return dbErrorResponse('accounts.id.update', updateError, 400);
     }
 
-    let sheetWarning: string | undefined;
-    try {
-      const syncRes = await syncAccountToSheets('upsert', buildSheetPayload(updated));
-      if (!syncRes.ok) {
-        sheetWarning = syncRes.error;
+    if (beforeRow) {
+      const keepUrls = new Set<string>([nextMainUrl, ...nextGalleryUrls]);
+      const oldUrls = [
+        ...(beforeRow.main_image_url ? [String(beforeRow.main_image_url)] : []),
+        ...(Array.isArray(beforeRow.gallery_urls)
+          ? beforeRow.gallery_urls.map((u) => String(u))
+          : []),
+      ];
+      const orphanKeys = new Set<string>();
+      for (const oldUrl of oldUrls) {
+        if (!keepUrls.has(oldUrl)) {
+          const key = extractR2KeyFromUrl(oldUrl);
+          if (key) orphanKeys.add(key);
+        }
       }
-    } catch {
-      sheetWarning = 'Sheets sync error';
+      if (orphanKeys.size > 0) {
+        await Promise.allSettled([...orphanKeys].map((k) => deleteR2Object(k)));
+      }
     }
 
     revalidateTag('accounts', { expire: 0 });
-    return jsonNoStore({ ok: true, sheetWarning });
+    return jsonNoStore({ ok: true });
   } catch (err) {
     return serverErrorResponse('accounts.id.patch', err);
   }
@@ -299,14 +145,14 @@ export async function DELETE(
 ) {
   try {
     const { id } = await context.params;
-    const auth = await requireAdmin({ ownerOnly: true, pin: true });
+    const auth = await requireAdmin({ ownerOnly: true });
     if (!auth.ok) return auth.response;
 
     const { supabase } = auth.ctx;
 
     const { data: existing } = await supabase
       .from('accounts')
-      .select('code')
+      .select('main_image_url, gallery_urls')
       .eq('id', id)
       .maybeSingle();
 
@@ -319,11 +165,20 @@ export async function DELETE(
       return dbErrorResponse('accounts.id.delete', deleteError, 400);
     }
 
-    if (existing?.code) {
-      try {
-        await syncAccountToSheets('delete', { code: existing.code });
-      } catch {
-        // Non-blocking delete sync
+    if (existing) {
+      const keys = new Set<string>();
+      const mainKey = extractR2KeyFromUrl(existing.main_image_url);
+      if (mainKey) keys.add(mainKey);
+
+      if (Array.isArray(existing.gallery_urls)) {
+        for (const url of existing.gallery_urls) {
+          const k = extractR2KeyFromUrl(String(url));
+          if (k) keys.add(k);
+        }
+      }
+
+      if (keys.size > 0) {
+        await Promise.allSettled([...keys].map((k) => deleteR2Object(k)));
       }
     }
 

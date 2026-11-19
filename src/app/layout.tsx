@@ -20,9 +20,14 @@ const notoSansThai = Noto_Sans_Thai({
 });
 
 export const metadata: Metadata = {
+  metadataBase: new URL(
+    process.env.NEXT_PUBLIC_SITE_URL ?? 'https://paphumshop.vercel.app'
+  ),
   title: 'PAPhum | รับซื้อ ขาย ทำป้ายRoV',
   description: 'RoV by PAPhum ผ่อน-ผ่านกลางได้และรับทำป้ายขายไอดีงานไวม้าก',
 };
+
+
 
 export default function RootLayout({
   children,

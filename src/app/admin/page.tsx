@@ -1,23 +1,19 @@
 import { Suspense } from 'react';
 import { connection } from 'next/server';
-import { cookies } from 'next/headers';
 import { createSupabaseServerClient } from '@/lib/supabase/server';
+import AdminLoginForm from '@/components/admin/AdminLoginForm';
+import AdminDashboardClient from '@/components/admin/AdminDashboardClient';
 import {
   AccountPublic,
   AdminRole,
   BannerCategory,
   InstallmentSettings,
 } from '@/types/database';
-import AdminLoginForm from '@/components/admin/AdminLoginForm';
-import AdminDashboardClient from '@/components/admin/AdminDashboardClient';
-import {
-  PIN_COOKIE_NAME,
-  pinVersionFromSalt,
-  verifyPinToken,
-} from '@/lib/pin-token';
+import { DEFAULT_INSTALLMENT_RATES } from '@/lib/installment-config';
 
-async function AdminLoader() {
+async function AdminContent() {
   await connection();
+
   const supabase = await createSupabaseServerClient();
   const {
     data: { user },
@@ -29,84 +25,61 @@ async function AdminLoader() {
 
   const { data: roleRow } = await supabase
     .from('admin_roles')
-    .select('username, role')
+    .select('role')
     .eq('user_id', user.id)
     .maybeSingle();
 
-  const role: AdminRole = (roleRow?.role as AdminRole) ?? 'staff';
-  const username: string =
-    roleRow?.username ?? user.email?.split('@')[0] ?? 'admin';
-
-  const categoriesRes = await supabase
-    .from('banner_categories')
-    .select('*')
-    .order('sort_order', { ascending: true });
-
-  const fallbackSettings: InstallmentSettings = {
-    id: 1,
-    weekly_interest_rate: 140,
-    monthly_interest_rate: 600,
-    default_min_down_weekly: 1000,
-    default_min_down_monthly: 2000,
-    default_free_weeks: 2,
-    default_free_months: 1,
-    updated_at: new Date().toISOString(),
-  };
-
-  if (role === 'staff') {
+  if (!roleRow) {
     return (
-      <AdminDashboardClient
-        role="staff"
-        username={username}
-        initialAccounts={[]}
-        initialCategories={(categoriesRes.data ?? []) as BannerCategory[]}
-        initialSettings={fallbackSettings}
-        initialHasPin={false}
-        initialPinUnlocked={false}
-      />
+      <div className="mx-auto max-w-md rounded-2xl border border-red-500/30 bg-red-500/10 p-6 text-center text-sm text-red-300">
+        บัญชีนี้ไม่มีสิทธิ์เข้าถึงระบบหลังบ้าน (กรุณาเพิ่ม user_id ลงตาราง admin_roles)
+      </div>
     );
   }
 
-  const [accountsRes, settingsRes, pinRes] = await Promise.all([
-    supabase
-      .from('accounts')
-      .select(
-        'id, code, status, price, min_down_weekly, min_down_monthly, interest_free_weeks, interest_free_months, tags, description, main_image_url, gallery_urls, created_at, updated_at'
-      )
-      .order('created_at', { ascending: false }),
-    supabase.from('installment_settings').select('*').eq('id', 1).single(),
-    supabase
-      .from('admin_security')
-      .select('user_id, pin_salt')
-      .eq('user_id', user.id)
-      .maybeSingle(),
-  ]);
+  const role = roleRow.role as AdminRole;
+  const isOwner = role === 'owner';
 
-  const cookieStore = await cookies();
-  const pinToken = cookieStore.get(PIN_COOKIE_NAME)?.value;
-  let initialPinUnlocked = false;
+  const [{ data: categoriesData }, { data: accountsData }, { data: settingsData }] =
+    await Promise.all([
+      supabase
+        .from('banner_categories')
+        .select('*')
+        .order('sort_order', { ascending: true })
+        .order('created_at', { ascending: true }),
+      isOwner
+        ? supabase
+            .from('accounts_public')
+            .select('*')
+            .order('created_at', { ascending: false })
+        : Promise.resolve({ data: [] }),
+      isOwner
+        ? supabase.from('installment_settings').select('*').eq('id', 1).maybeSingle()
+        : Promise.resolve({ data: null }),
+    ]);
 
-  if (pinRes.data?.pin_salt) {
-    try {
-      initialPinUnlocked = verifyPinToken(
-        pinToken,
-        user.id,
-        pinVersionFromSalt(String(pinRes.data.pin_salt))
-      );
-    } catch {
-      initialPinUnlocked = false;
-    }
-  }
+  const username = (user.email ?? 'admin').split('@')[0];
+
+  const settings: InstallmentSettings = settingsData
+    ? (settingsData as InstallmentSettings)
+    : {
+        id: 1,
+        weekly_interest_rate: DEFAULT_INSTALLMENT_RATES.weeklyRate,
+        monthly_interest_rate: DEFAULT_INSTALLMENT_RATES.monthlyRate,
+        default_min_down_weekly: 1000,
+        default_min_down_monthly: 2000,
+        default_free_weeks: 2,
+        default_free_months: 1,
+        updated_at: new Date(0).toISOString(),
+      };
 
   return (
     <AdminDashboardClient
-      role="owner"
       username={username}
-      initialAccounts={(accountsRes.data ?? []) as AccountPublic[]}
-      initialCategories={(categoriesRes.data ?? []) as BannerCategory[]}
-      initialSettings={(settingsRes.data as InstallmentSettings) ?? fallbackSettings}
-      initialHasPin={Boolean(pinRes.data)}
-      initialPinUnlocked={initialPinUnlocked}
+      role={role}
+      initialAccounts={(accountsData ?? []) as AccountPublic[]}
+      initialCategories={(categoriesData ?? []) as BannerCategory[]}
+      initialSettings={settings}
     />
   );
 }
@@ -115,10 +88,10 @@ export default function AdminPage() {
   return (
     <Suspense
       fallback={
-        <div className="h-64 animate-pulse rounded-xl border border-white/[0.06] bg-[#111216]" />
+        <div className="h-96 animate-pulse rounded-2xl border border-white/[0.06] bg-[#111216]" />
       }
     >
-      <AdminLoader />
+      <AdminContent />
     </Suspense>
   );
 }
